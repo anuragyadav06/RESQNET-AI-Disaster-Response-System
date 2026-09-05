@@ -1,184 +1,427 @@
-.counter {
-  font-size: 16px;
-  padding: 5px 10px;
-  border-radius: 5px;
-  color: var(--accent);
-  background: var(--accent-bg);
-  border: 2px solid transparent;
-  transition: border-color 0.3s;
-  margin-bottom: 24px;
-
-  &:hover {
-    border-color: var(--accent-border);
-  }
-  &:focus-visible {
-    outline: 2px solid var(--accent);
-    outline-offset: 2px;
-  }
+/* RESQNET application shell — restrained emergency operations UI */
+:root {
+  --app-bg: #eef1f4;
+  --app-surface: #ffffff;
+  --app-sidebar: #111820;
+  --app-sidebar-2: #0d141b;
+  --app-border: #dfe4e9;
+  --app-border-dark: #26313b;
+  --app-text: #17212b;
+  --app-muted: #697784;
+  --app-muted-dark: #9aa6b1;
+  --app-red: #c62828;
+  --app-red-soft: #fff0f0;
+  --app-orange: #b85c00;
+  --app-green: #18804b;
+  --app-blue: #2563a8;
 }
 
-.hero {
-  position: relative;
+* { box-sizing: border-box; }
 
-  .base,
-  .framework,
-  .vite {
-    inset-inline: 0;
-    margin: 0 auto;
-  }
-
-  .base {
-    width: 170px;
-    position: relative;
-    z-index: 0;
-  }
-
-  .framework,
-  .vite {
-    position: absolute;
-  }
-
-  .framework {
-    z-index: 1;
-    top: 34px;
-    height: 28px;
-    transform: perspective(2000px) rotateZ(300deg) rotateX(44deg) rotateY(39deg)
-      scale(1.4);
-  }
-
-  .vite {
-    z-index: 0;
-    top: 107px;
-    height: 26px;
-    width: auto;
-    transform: perspective(2000px) rotateZ(300deg) rotateX(40deg) rotateY(39deg)
-      scale(0.8);
-  }
-}
-
-#center {
+.app-shell {
+  min-height: 100vh;
+  height: 100vh;
   display: flex;
   flex-direction: column;
-  gap: 25px;
-  place-content: center;
+  background: var(--app-bg);
+  color: var(--app-text);
+}
+
+.app-header {
+  height: 64px;
+  flex: 0 0 64px;
+  background: var(--app-surface);
+  border-bottom: 1px solid var(--app-border);
+  display: flex;
+  align-items: center;
+  padding: 0 22px;
+  gap: 24px;
+  z-index: 20;
+}
+
+.app-brand {
+  width: 238px;
+  flex: 0 0 238px;
+  display: flex;
+  align-items: center;
+  gap: 11px;
+}
+
+.app-logo {
+  width: 34px;
+  height: 34px;
+  border-radius: 7px;
+  background: #18232d;
+  color: #fff;
+  display: grid;
   place-items: center;
-  flex-grow: 1;
-
-  @media (max-width: 1024px) {
-    padding: 32px 20px 24px;
-    gap: 18px;
-  }
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: .08em;
 }
 
-#next-steps {
+.app-brand-name {
+  font-size: 14px;
+  line-height: 1;
+  font-weight: 800;
+  letter-spacing: .07em;
+}
+
+.app-brand-meta {
+  margin-top: 4px;
+  font-size: 10px;
+  color: var(--app-muted);
+}
+
+.app-header-center {
+  min-width: 0;
+  flex: 1;
   display: flex;
-  border-top: 1px solid var(--border);
-  text-align: left;
-
-  & > div {
-    flex: 1 1 0;
-    padding: 32px;
-    @media (max-width: 1024px) {
-      padding: 24px 20px;
-    }
-  }
-
-  .icon {
-    margin-bottom: 16px;
-    width: 22px;
-    height: 22px;
-  }
-
-  @media (max-width: 1024px) {
-    flex-direction: column;
-    text-align: center;
-  }
+  align-items: center;
+  gap: 9px;
+  font-size: 11px;
+  color: var(--app-muted);
 }
 
-#docs {
-  border-right: 1px solid var(--border);
-
-  @media (max-width: 1024px) {
-    border-right: none;
-    border-bottom: 1px solid var(--border);
-  }
+.app-context-label {
+  color: var(--app-text);
+  font-weight: 700;
 }
 
-#next-steps ul {
-  list-style: none;
-  padding: 0;
+.app-context-separator { color: #b1bac3; }
+
+.app-header-actions {
   display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.connection-status,
+.header-metric {
+  height: 34px;
+  border: 1px solid var(--app-border);
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
   gap: 8px;
-  margin: 32px 0 0;
-
-  .logo {
-    height: 18px;
-  }
-
-  a {
-    color: var(--text-h);
-    font-size: 16px;
-    border-radius: 6px;
-    background: var(--social-bg);
-    display: flex;
-    padding: 6px 12px;
-    align-items: center;
-    gap: 8px;
-    text-decoration: none;
-    transition: box-shadow 0.3s;
-
-    &:hover {
-      box-shadow: var(--shadow);
-    }
-    .button-icon {
-      height: 18px;
-      width: 18px;
-    }
-  }
-
-  @media (max-width: 1024px) {
-    margin-top: 20px;
-    flex-wrap: wrap;
-    justify-content: center;
-
-    li {
-      flex: 1 1 calc(50% - 8px);
-    }
-
-    a {
-      width: 100%;
-      justify-content: center;
-      box-sizing: border-box;
-    }
-  }
+  padding: 0 10px;
+  font-size: 10px;
+  color: var(--app-muted);
+  white-space: nowrap;
 }
 
-#spacer {
-  height: 88px;
-  border-top: 1px solid var(--border);
-  @media (max-width: 1024px) {
-    height: 48px;
-  }
+.connection-status.online { color: #37634f; }
+.connection-status.degraded { color: #8a6400; }
+
+.status-dot {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 7px;
+  border-radius: 50%;
+  background: #2e9d65;
 }
 
-.ticks {
-  position: relative;
+.connection-status.degraded .status-dot { background: #d19a17; }
+
+.header-metric span { color: var(--app-muted); }
+.header-metric strong { color: var(--app-text); font-size: 10px; }
+
+.header-icon-button {
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--app-border);
+  border-radius: 6px;
+  background: #fff;
+  color: #52606d;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+}
+.header-icon-button:hover { background: #f5f7f9; color: var(--app-text); }
+.header-icon-button svg { width: 15px; height: 15px; }
+
+.operator {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-left: 4px;
+}
+.operator-avatar {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: #e8edf1;
+  color: #3c4b58;
+  display: grid;
+  place-items: center;
+  font-size: 9px;
+  font-weight: 800;
+}
+.operator-copy { display: grid; gap: 2px; }
+.operator-copy strong { font-size: 10px; }
+.operator-copy span { font-size: 9px; color: var(--app-muted); }
+
+.app-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+.app-sidebar {
+  width: 238px;
+  flex: 0 0 238px;
+  background: var(--app-sidebar);
+  color: #dce3e8;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  overflow-y: auto;
+}
+
+.app-nav {
+  padding: 16px 10px;
+}
+
+.app-nav-section + .app-nav-section {
+  margin-top: 20px;
+}
+
+.app-nav-heading {
+  padding: 0 11px 8px;
+  color: #788592;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+
+.app-nav-item {
   width: 100%;
+  height: 38px;
+  border: 0;
+  border-left: 3px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: #aeb8c1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 9px;
+  cursor: pointer;
+  font-size: 11px;
+  text-align: left;
+}
+.app-nav-item:hover {
+  background: #19232d;
+  color: #f3f6f8;
+}
+.app-nav-item.is-active {
+  background: #202a34;
+  border-left-color: #d33838;
+  color: #fff;
+}
+.app-nav-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.app-nav-left svg {
+  width: 15px;
+  height: 15px;
+  color: #7e8b97;
+}
+.app-nav-item.is-active .app-nav-left svg { color: #f06a6a; }
 
-  &::before,
-  &::after {
-    content: '';
-    position: absolute;
-    top: -4.5px;
-    border: 5px solid transparent;
-  }
+.app-nav-badge {
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  display: grid;
+  place-items: center;
+  background: #38434e;
+  color: #e6ebef;
+  font-size: 9px;
+  font-weight: 700;
+}
+.app-nav-badge.critical { background: #9f2525; color: #fff; }
+.app-nav-badge.warning { background: #815314; color: #fff; }
+.app-nav-badge.info { background: #245176; color: #fff; }
 
-  &::before {
-    left: 0;
-    border-left-color: var(--border);
+.app-sidebar-footer {
+  padding: 12px;
+  border-top: 1px solid #25303a;
+}
+
+.system-health {
+  padding: 11px;
+  border: 1px solid #293641;
+  border-radius: 6px;
+  background: #151e27;
+}
+.system-health-top {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 10px;
+}
+.health-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #2e9d65;
+}
+.system-health-meta {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 7px;
+  color: #758390;
+  font-size: 9px;
+}
+
+.sidebar-settings {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: #85919c;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 11px 2px 1px;
+  font-size: 10px;
+  cursor: pointer;
+}
+.sidebar-settings:hover { color: #fff; }
+.sidebar-settings svg { width: 14px; height: 14px; }
+
+.app-main {
+  min-width: 0;
+  flex: 1;
+  overflow-y: auto;
+  background: var(--app-bg);
+  padding: 22px 24px 26px;
+}
+
+.mobile-nav { display: none; }
+
+.app-footer {
+  height: 28px;
+  flex: 0 0 28px;
+  background: #fff;
+  border-top: 1px solid var(--app-border);
+  color: #7a8792;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 20px;
+  font-size: 9px;
+}
+.app-footer > div {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+}
+.footer-live {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: #466756;
+}
+.footer-live .status-dot { width: 5px; height: 5px; flex-basis: 5px; }
+.footer-right { color: #8d98a1; }
+
+@media (max-width: 1100px) {
+  .app-header-center { display: none; }
+  .operator-copy { display: none; }
+  .app-main { padding: 18px; }
+}
+
+@media (max-width: 800px) {
+  .app-header { padding: 0 14px; }
+  .app-brand { width: auto; flex: 1; }
+  .app-header-actions { gap: 7px; }
+  .connection-status span:not(.status-dot),
+  .header-metric { display: none; }
+  .app-sidebar { display: none; }
+  .app-main { padding: 12px; }
+  .mobile-nav {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 5px;
+    margin-bottom: 12px;
   }
-  &::after {
-    right: 0;
-    border-right-color: var(--border);
+  .mobile-nav button {
+    min-height: 42px;
+    border: 1px solid var(--app-border);
+    border-radius: 6px;
+    background: #fff;
+    color: #687681;
+    display: grid;
+    place-items: center;
+    gap: 2px;
+    font-size: 9px;
+    cursor: pointer;
   }
+  .mobile-nav button svg { width: 14px; height: 14px; }
+  .mobile-nav button.active {
+    border-color: #d75a5a;
+    color: var(--app-red);
+    background: #fff7f7;
+  }
+  .app-footer { display: none; }
+}
+
+@media (max-width: 520px) {
+  .app-logo { width: 30px; height: 30px; }
+  .app-brand-name { font-size: 13px; }
+  .app-brand-meta { font-size: 9px; }
+  .header-icon-button { width: 31px; height: 31px; }
+}
+
+/* ============================================================
+   RESQNET — COMMAND CENTER PAGE BANNER
+   Only affects the Command Center hero/banner.
+   Does NOT modify the global application header.
+   ============================================================ */
+
+   .command-center-banner {
+  background: #0d1b2a;
+  color: #ffffff;
+  border: 1px solid #1d3448;
+  border-radius: 8px;
+  padding: 22px 24px;
+  width: 100%;
+  max-width: none;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+.command-header {
+  width: 100%;
+  max-width: none;
+}
+.command-hero,
+.page-header {
+  width: 100%;
+  max-width: none;
+  box-sizing: border-box;
+}
+
+.command-center-banner h1 {
+  color: #ffffff;
+}
+
+.command-center-banner p {
+  color: #9fb1c1;
+}
+
+.command-center-banner .eyebrow,
+.command-center-banner .breadcrumb {
+  color: #8da3b5;
+}
+
+.command-center-banner .simulation-status {
+  background: #102437;
+  border: 1px solid #29455c;
+  color: #f0f4f7;
 }
