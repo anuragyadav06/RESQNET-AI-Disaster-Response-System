@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="420" viewBox="0 0 720 420">
+<rect width="720" height="420" fill="#071018"/><path d="M0 70H720M0 140H720M0 210H720M0 280H720M0 350H720M90 0V420M180 0V420M270 0V420M360 0V420M450 0V420M540 0V420M630 0V420" stroke="#183344"/>
+<circle cx="360" cy="215" r="70" fill="#2bd7ff" opacity=".12"/><circle cx="360" cy="215" r="24" fill="#ff5360" opacity=".85"/><circle cx="360" cy="215" r="42" fill="none" stroke="#ff5360" opacity=".45" stroke-width="3"/>
+<text x="24" y="34" fill="#72ddff" font-family="monospace" font-size="18" font-weight="700">RESQNET // SIMULATED DRONE EVIDENCE</text>
+<text x="24" y="392" fill="#8ca6ba" font-family="monospace" font-size="15">VIC-102  |  HAZARD: SMOKE  |  CAPTURED BY: DRONE-S01  |  COORD: 5, -90</text>
+<text x="330" y="220" fill="white" font-family="monospace" font-size="13" text-anchor="middle">VICTIM</text></svg>
