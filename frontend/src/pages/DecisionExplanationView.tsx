@@ -25,6 +25,8 @@ export const DecisionExplanationView: React.FC<DecisionExplanationViewProps> = (
 
   useEffect(() => {
     fetchDecisions();
+    const timer = window.setInterval(fetchDecisions, 2000);
+    return () => window.clearInterval(timer);
   }, []);
 
   return (

@@ -51,7 +51,25 @@ export function useSystemWebSocket() {
           try {
             const msg = JSON.parse(event.data);
             if (msg.type === 'STATE_UPDATE' && msg.snapshot) {
-              setSnapshot(msg.snapshot);
+              setSnapshot((prev) => ({
+                ...msg.snapshot,
+                simulation_frame_base64: prev?.simulation_frame_base64,
+                simulation_frame_mime_type: prev?.simulation_frame_mime_type,
+                simulation_frame_timestamp: prev?.simulation_frame_timestamp,
+              }));
+              setLastUpdated(Date.now());
+            } else if (msg.type === 'SIMULATION_FRAME') {
+              setSnapshot((prev) => prev ? ({
+                ...prev,
+                simulation_frame_base64: msg.image_base64,
+                simulation_frame_mime_type: msg.image_mime_type || 'image/jpeg',
+                simulation_frame_timestamp: msg.timestamp,
+              }) : prev);
+              setLastUpdated(Date.now());
+            } else if (msg.type === 'EVENT' || msg.type === 'SIMULATION_EVENT') {
+              // System B is authoritative; refresh immediately after mission,
+              // victim, collapse, or rescue lifecycle events.
+              fetchFallback();
               setLastUpdated(Date.now());
             } else if (msg.type === 'PONG' && msg.timestamp) {
               const rtt = Date.now() - msg.timestamp;

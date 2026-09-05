@@ -42,18 +42,22 @@ class MissionAgent:
         # 1. Determine capability requirement & objective
         if objective_override:
             objective = objective_override
-            required_cap = DroneCapability.SCOUT
-            if objective == MissionObjective.MEDICAL_SUPPLY_DROP:
-                required_cap = DroneCapability.MEDICAL
+            required_cap = {
+                MissionObjective.MEDICAL_SUPPLY_DROP: DroneCapability.MEDICAL,
+                MissionObjective.HEAVY_EXTRICATION: DroneCapability.HEAVY_LIFT,
+                MissionObjective.STRUCTURAL_SURVEY: DroneCapability.HEAVY_LIFT,
+                MissionObjective.RESCUE_EXTRACTION: DroneCapability.RESCUE,
+                MissionObjective.RESCUE_TRIAGE: DroneCapability.RESCUE,
+            }.get(objective, DroneCapability.SCOUT)
         elif victim.medical_severity >= 0.60:
             objective = MissionObjective.MEDICAL_SUPPLY_DROP
             required_cap = DroneCapability.MEDICAL
         elif victim.accessibility_factor < 0.35:
-            objective = MissionObjective.STRUCTURAL_SURVEY
+            objective = MissionObjective.HEAVY_EXTRICATION
             required_cap = DroneCapability.HEAVY_LIFT
         else:
-            objective = MissionObjective.RESCUE_TRIAGE
-            required_cap = DroneCapability.SCOUT
+            objective = MissionObjective.RESCUE_EXTRACTION
+            required_cap = DroneCapability.RESCUE
 
         # 2. Allocate optimal drone, or honor an explicit operator selection
         if preferred_drone_id:
@@ -76,7 +80,7 @@ class MissionAgent:
             return None, f"Resource allocation failed: {explanation}"
 
         # 3. Plan optimal route
-        node_path, waypoints, total_dist = routing_agent.plan_route(drone.position, victim.location)
+        node_path, waypoints, total_dist = routing_agent.plan_route(drone.position, victim.location, altitude=105.0)
         
         # 4. Assess risk
         risk = risk_agent.evaluate_route_risk(
@@ -129,6 +133,15 @@ class MissionAgent:
         # 6. Generate and send Command Protocol v1.0 packet to System B
         cmd_type = CommandType.DELIVER_SUPPLIES if objective == MissionObjective.MEDICAL_SUPPLY_DROP else CommandType.NAVIGATE
         issued, cmd_payload, msg = await command_agent.issue_mission_command(plan, cmd_type)
+        if not issued:
+            world_state.missions.pop(mission_id, None)
+            drone.status = DroneStatus.IDLE
+            drone.current_mission_id = None
+            drone.target_victim_id = None
+            victim.assigned_drone_id = None
+            victim.assigned_mission_id = None
+            world_state.increment_version()
+            return None, f"Dispatch not executed: {msg}"
 
         return plan, f"Mission {mission_id} successfully created and dispatched ({msg})"
 

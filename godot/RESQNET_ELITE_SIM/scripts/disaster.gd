@@ -40,6 +40,8 @@ var fires: Array = []
 var debris: Array = []
 var victims: Array = []
 var civilians: Array = []
+var response_relief_zones: Dictionary = {}
+var response_labels: Dictionary = {}
 
 var rng: RandomNumberGenerator = RandomNumberGenerator.new()
 var civilian_rng: RandomNumberGenerator = RandomNumberGenerator.new()
@@ -55,6 +57,29 @@ var current_disaster_position: Vector3 = Vector3.ZERO
 var disaster_radius: float = 80.0
 var primary_fire_position: Vector3 = Vector3.ZERO
 
+# Earthquake visual state. The city is never deleted or replaced; only a
+# temporary procedural shake/crack overlay is applied while seismic energy is active.
+var _earthquake_visual_root: Node3D = null
+var _earthquake_base_city_position: Vector3 = Vector3.ZERO
+var _earthquake_cracks: Array[Node3D] = []
+var _earthquake_buildings: Array[Node3D] = []
+var _earthquake_building_base: Dictionary = {}
+var _earthquake_camera: Camera3D = null
+var _earthquake_camera_base_position: Vector3 = Vector3.ZERO
+var _earthquake_camera_base_rotation: Vector3 = Vector3.ZERO
+var _earthquake_rumble: float = 0.0
+
+# Controlled structural-collapse simulation.
+# Each entry stores the live building node, its original transform, the
+# selected impact point, and any generated collapse debris.
+var _earthquake_collapses: Array[Dictionary] = []
+var _earthquake_collapse_started: bool = false
+var _earthquake_collapse_completed: bool = false
+var _earthquake_collapse_duration: float = 1.25
+var _earthquake_collapse_trigger_time: float = 1.35
+var _earthquake_collapse_impact_radius: float = 34.0
+var _earthquake_collapse_debris_roots: Array[Node3D] = []
+
 
 # ============================================================
 # FLOOD STATE
@@ -66,10 +91,10 @@ var flood_active: bool = false
 # -Z = NORTH
 
 # Flood begins outside southern boundary.
-var flood_front_z: float = 520.0
+var flood_front_z: float = 358.0
 
 # Final northern boundary.
-var flood_end_z: float = -560.0
+var flood_end_z: float = -358.0
 
 # Movement speed of flood front.
 var flood_speed: float = 32.0
@@ -105,9 +130,9 @@ var flood_100_reported: bool = false
 # FLOOD PARAMETERS
 # ============================================================
 
-const FLOOD_START_Z: float = 520.0
-const FLOOD_END_Z: float = -520.0
-const FLOOD_WIDTH: float = 1400.0
+const FLOOD_START_Z: float = 358.0
+const FLOOD_END_Z: float = -358.0
+const FLOOD_WIDTH: float = 716.0
 
 const FLOOD_CAPTURE_MARGIN: float = 16.0
 
@@ -268,6 +293,12 @@ func reset() -> void:
 			false
 		)
 
+		person.set_meta("resqnet_detected", false)
+		person.set_meta("resqnet_victim_id", "")
+		person.set_meta("medical_supplied", false)
+		person.set_meta("extrication_complete", false)
+		person.set_meta("hazard_mitigation", 0.0)
+
 		person.set_meta(
 			"rescued",
 			false
@@ -333,6 +364,17 @@ func reset() -> void:
 # ============================================================
 
 func _reset_disaster_only() -> void:
+
+	for zone in response_relief_zones.values():
+		if is_instance_valid(zone):
+			zone.queue_free()
+	for label in response_labels.values():
+		if is_instance_valid(label):
+			label.queue_free()
+	response_relief_zones.clear()
+	response_labels.clear()
+
+	_clear_earthquake_visuals()
 
 	active = false
 	disaster_type = "NONE"
@@ -416,6 +458,12 @@ func _reset_disaster_only() -> void:
 			false
 		)
 
+		person.set_meta("resqnet_detected", false)
+		person.set_meta("resqnet_victim_id", "")
+		person.set_meta("medical_supplied", false)
+		person.set_meta("extrication_complete", false)
+		person.set_meta("hazard_mitigation", 0.0)
+
 		person.set_meta(
 			"rescued",
 			false
@@ -461,6 +509,7 @@ func _process(delta: float) -> void:
 
 	# Civilians continue moving even when no disaster is active.
 	_update_civilians(delta)
+	_update_response_relief(delta)
 
 
 	if not active:
@@ -480,6 +529,7 @@ func _process(delta: float) -> void:
 	if disaster_type == "EARTHQUAKE":
 
 		_process_earthquake()
+		_process_building_collapses()
 
 
 	# ========================================================
@@ -535,31 +585,641 @@ func _process(delta: float) -> void:
 # ============================================================
 
 func _process_earthquake() -> void:
-
-	if elapsed < 8.0:
-
-		quake_intensity = (
-			sin(elapsed * 8.0) *
-			0.5 +
-			0.5
-		)
-
-	elif elapsed < 18.0:
-
-		quake_intensity = max(
-			0.0,
-			1.0 -
-			((elapsed - 8.0) / 10.0)
-		)
-
+	# Short, strong earthquake waveform.
+	# Main shaking ends at exactly 4 seconds; trapped victims, debris,
+	# fires and collapse hazards remain active after the ground stabilizes.
+	if elapsed < 0.8:
+		var onset: float = elapsed / 0.8
+		quake_intensity = lerpf(0.0, 1.0, onset * onset)
+	elif elapsed < 2.8:
+		var sustain: float = (elapsed - 0.8) / 2.0
+		quake_intensity = 0.82 + sin(sustain * PI) * 0.18
+	elif elapsed < 4.0:
+		var decay: float = 1.0 - ((elapsed - 2.8) / 1.2)
+		quake_intensity = maxf(0.0, decay) * 0.82
 	else:
-
 		quake_intensity = 0.0
 
+	quake_intensity = clampf(quake_intensity, 0.0, 1.0)
+	_update_earthquake_visuals()
+
+
+func _update_earthquake_visuals() -> void:
+	if city == null or not is_instance_valid(city):
+		return
+
+	if _earthquake_visual_root == null:
+		_earthquake_visual_root = city
+		_earthquake_base_city_position = city.position
+		_cache_earthquake_buildings()
+		_cache_earthquake_camera()
+		_create_earthquake_cracks()
+
+	var intensity: float = quake_intensity
+
+	if intensity > 0.005:
+		var horizontal: float = 1.15 * intensity
+		var vertical: float = 0.32 * intensity
+		var city_offset := Vector3(
+			sin(elapsed * 43.0) * horizontal + sin(elapsed * 71.0) * horizontal * 0.32,
+			abs(sin(elapsed * 49.0)) * vertical,
+			cos(elapsed * 47.0) * horizontal + cos(elapsed * 79.0) * horizontal * 0.28
+		)
+		city.position = _earthquake_base_city_position + city_offset
+		_earthquake_rumble = intensity
+		_shake_earthquake_buildings(intensity)
+		_shake_earthquake_camera(intensity)
+	else:
+		city.position = _earthquake_base_city_position
+		_earthquake_rumble = 0.0
+		_restore_earthquake_buildings()
+		_restore_earthquake_camera()
+
+	var crack_pulse: float = 0.82 + sin(elapsed * 11.0) * 0.12 + intensity * 0.24
+	for crack in _earthquake_cracks:
+		if not is_instance_valid(crack):
+			continue
+		crack.visible = intensity > 0.025
+		crack.scale = Vector3.ONE * crack_pulse
+
+
+func _cache_earthquake_buildings() -> void:
+	_earthquake_buildings.clear()
+	_earthquake_building_base.clear()
+
+	var nodes: Array[Node] = []
+	_collect_earthquake_nodes(city, nodes)
+
+	for node in nodes:
+		if not (node is Node3D):
+			continue
+		var n := node as Node3D
+		var lower: String = n.name.to_lower()
+		var looks_like_building: bool = (
+			lower.contains("building") or
+			lower.contains("tower") or
+			lower.contains("structure") or
+			lower.contains("block") or
+			lower.contains("skyscraper") or
+			lower.contains("house")
+		)
+		if not looks_like_building or n == city:
+			continue
+		_earthquake_buildings.append(n)
+		_earthquake_building_base[n.get_instance_id()] = {
+			"node": n,
+			"position": n.position,
+			"rotation": n.rotation
+		}
+
+
+func _collect_earthquake_nodes(root: Node, output: Array[Node]) -> void:
+	for child in root.get_children():
+		if not is_instance_valid(child):
+			continue
+		output.append(child)
+		if child.get_child_count() > 0:
+			_collect_earthquake_nodes(child, output)
+
+
+func _cache_earthquake_camera() -> void:
+	_earthquake_camera = null
+	var root: Node = get_tree().current_scene
+	if root == null:
+		return
+
+	var nodes: Array[Node] = []
+	_collect_earthquake_nodes(root, nodes)
+
+	for node in nodes:
+		if node is Camera3D:
+			var candidate := node as Camera3D
+			if candidate.current:
+				_earthquake_camera = candidate
+				_earthquake_camera_base_position = candidate.position
+				_earthquake_camera_base_rotation = candidate.rotation
+				return
+
+
+func _shake_earthquake_buildings(intensity: float) -> void:
+	var lateral: float = 0.26 * intensity
+	var vertical: float = 0.10 * intensity
+	var twist: float = 0.018 * intensity
+
+	for n in _earthquake_buildings:
+		if not is_instance_valid(n):
+			continue
+
+		var base: Variant = _earthquake_building_base.get(n.get_instance_id(), null)
+		if base == null:
+			continue
+
+		var phase: float = float(n.get_instance_id() % 31) * 0.37
+		var offset := Vector3(
+			sin(elapsed * 31.0 + phase) * lateral,
+			abs(sin(elapsed * 37.0 + phase)) * vertical,
+			cos(elapsed * 34.0 + phase) * lateral
+		)
+		var base_position: Vector3 = base["position"]
+		var base_rotation: Vector3 = base["rotation"]
+
+		n.position = base_position + offset
+		n.rotation = base_rotation + Vector3(
+			sin(elapsed * 28.0 + phase) * twist,
+			cos(elapsed * 22.0 + phase) * twist * 0.45,
+			sin(elapsed * 33.0 + phase) * twist
+		)
+
+
+func _restore_earthquake_buildings() -> void:
+	for id in _earthquake_building_base.keys():
+		var data: Dictionary = _earthquake_building_base[id]
+		var n: Node3D = data["node"]
+		if not is_instance_valid(n):
+			continue
+		n.position = data["position"]
+		n.rotation = data["rotation"]
+
+
+func _shake_earthquake_camera(intensity: float) -> void:
+	if _earthquake_camera == null or not is_instance_valid(_earthquake_camera):
+		return
+
+	var camera_under_city: bool = city.is_ancestor_of(_earthquake_camera)
+	var positional_strength: float = 0.20 * intensity
+	var rotational_strength: float = 0.012 * intensity
+	if camera_under_city:
+		positional_strength = 0.0
+
+	var phase: float = elapsed * 53.0
+	_earthquake_camera.position = _earthquake_camera_base_position + Vector3(
+		sin(phase) * positional_strength,
+		cos(phase * 1.13) * positional_strength * 0.55,
+		sin(phase * 0.87) * positional_strength
+	)
+	_earthquake_camera.rotation = _earthquake_camera_base_rotation + Vector3(
+		sin(phase * 0.91) * rotational_strength,
+		cos(phase * 0.73) * rotational_strength * 0.7,
+		sin(phase * 1.07) * rotational_strength
+	)
+
+
+func _restore_earthquake_camera() -> void:
+	if _earthquake_camera == null or not is_instance_valid(_earthquake_camera):
+		return
+	_earthquake_camera.position = _earthquake_camera_base_position
+	_earthquake_camera.rotation = _earthquake_camera_base_rotation
+
+
+func _create_earthquake_cracks() -> void:
+	if not _earthquake_cracks.is_empty():
+		return
+
+	var root := Node3D.new()
+	root.name = "EarthquakeCracks"
+	city.add_child(root)
+
+	var offsets := [
+		Vector3(-72.0, 0.30, -42.0),
+		Vector3(-34.0, 0.31, 18.0),
+		Vector3(18.0, 0.30, -30.0),
+		Vector3(54.0, 0.31, 28.0),
+		Vector3(-5.0, 0.32, 62.0),
+		Vector3(76.0, 0.30, -8.0)
+	]
+
+	for i in range(offsets.size()):
+		var crack := MeshInstance3D.new()
+		crack.name = "SeismicCrack_%02d" % (i + 1)
+		var mesh := ImmediateMesh.new()
+		mesh.surface_begin(Mesh.PRIMITIVE_LINES)
+
+		var p: Vector3 = offsets[i]
+		var length_scale: float = 10.0 + float(i % 3) * 4.0
+		mesh.surface_add_vertex(p)
+		mesh.surface_add_vertex(p + Vector3(length_scale, 0.0, 2.0))
+		mesh.surface_add_vertex(p + Vector3(length_scale, 0.0, 2.0))
+		mesh.surface_add_vertex(p + Vector3(length_scale + 4.0, 0.0, -3.0))
+		mesh.surface_add_vertex(p + Vector3(length_scale * 0.55, 0.0, 1.0))
+		mesh.surface_add_vertex(p + Vector3(length_scale * 0.35, 0.0, 7.0))
+		mesh.surface_end()
+
+		var mat := StandardMaterial3D.new()
+		mat.albedo_color = Color(0.025, 0.018, 0.012)
+		mat.emission_enabled = true
+		mat.emission = Color(0.16, 0.07, 0.025)
+		mat.emission_energy_multiplier = 2.0
+		mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+
+		crack.material_override = mat
+		root.add_child(crack)
+		_earthquake_cracks.append(crack)
+
+
+func _clear_earthquake_visuals() -> void:
+	_clear_building_collapse_state()
+	_restore_earthquake_buildings()
+	_restore_earthquake_camera()
+
+	if is_instance_valid(city):
+		city.position = _earthquake_base_city_position
+
+	if _earthquake_visual_root != null and is_instance_valid(_earthquake_visual_root):
+		var crack_root := _earthquake_visual_root.get_node_or_null("EarthquakeCracks")
+		if crack_root != null:
+			crack_root.queue_free()
+
+	_earthquake_cracks.clear()
+	_earthquake_buildings.clear()
+	_earthquake_building_base.clear()
+	_earthquake_visual_root = null
+	_earthquake_camera = null
+	_earthquake_rumble = 0.0
+
 
 # ============================================================
-# FLOOD PROCESSING
+# CONTROLLED BUILDING COLLAPSE
 # ============================================================
+# The collapse is deterministic and simulation-safe rather than relying on
+# unconstrained rigid bodies. A real building node is tilted/fallen, debris
+# is generated at the impact point, and nearby civilians become trapped.
+# This keeps the digital twin stable while still producing a convincing
+# structural-failure event.
+
+func _process_building_collapses() -> void:
+	if disaster_type != "EARTHQUAKE" or not active:
+		return
+
+	# Give the earthquake enough time to visibly build before the first
+	# structural failure.
+	if not _earthquake_collapse_started and elapsed >= _earthquake_collapse_trigger_time:
+		_start_building_collapse()
+
+	for collapse in _earthquake_collapses:
+		var building: Node3D = collapse.get("building", null)
+		if building == null or not is_instance_valid(building):
+			continue
+
+		var progress: float = clampf(
+			(elapsed - float(collapse["start_time"])) / _earthquake_collapse_duration,
+			0.0,
+			1.0
+		)
+
+		# Ease-in gives the structure a short hesitation before it commits
+		# to the fall, then accelerates toward the impact.
+		var eased: float = progress * progress * (3.0 - 2.0 * progress)
+		var start_rotation: Vector3 = collapse["start_rotation"]
+		var target_rotation: Vector3 = collapse["target_rotation"]
+		building.rotation = start_rotation.lerp(target_rotation, eased)
+
+		# Slight lateral movement makes the collapse feel less like a simple
+		# rotation while remaining deterministic.
+		var base_position: Vector3 = collapse["base_position"]
+		var fall_direction: Vector3 = collapse["fall_direction"]
+		building.position = base_position + fall_direction * (18.0 * eased)
+
+		if progress >= 0.72 and not bool(collapse["impact_created"]):
+			collapse["impact_created"] = true
+			_create_collapse_impact(
+				collapse["impact_position"],
+				collapse["collapse_id"]
+			)
+
+		if progress >= 1.0 and not bool(collapse["event_reported"]):
+			collapse["event_reported"] = true
+			_earthquake_collapse_completed = true
+			event_changed.emit(
+				"STRUCTURAL COLLAPSE  |  %s  |  BUILDING DOWN  |  IMPACT ZONE SECURED"
+				% str(collapse["collapse_id"])
+			)
+
+
+func _start_building_collapse() -> void:
+	_earthquake_collapse_started = true
+
+	if city == null or _earthquake_buildings.is_empty():
+		event_changed.emit(
+			"STRUCTURAL FAILURE  |  NO COLLAPSIBLE BUILDING VISUAL FOUND"
+		)
+		return
+
+	var victim: Node3D = _find_best_collapse_victim()
+	var building: Node3D = _find_building_for_collapse(victim)
+
+	if building == null:
+		event_changed.emit(
+			"STRUCTURAL FAILURE  |  BUILDING TARGET UNAVAILABLE"
+		)
+		return
+
+	var base: Variant = _earthquake_building_base.get(
+		building.get_instance_id(),
+		null
+	)
+
+	if base == null:
+		return
+
+	var building_position: Vector3 = building.global_position
+	var impact_position: Vector3 = building_position
+	var fall_direction := Vector3(
+		rng.randf_range(-1.0, 1.0),
+		0.0,
+		rng.randf_range(-1.0, 1.0)
+	)
+
+	if victim != null and is_instance_valid(victim):
+		var to_victim := victim.global_position - building_position
+		to_victim.y = 0.0
+		if to_victim.length() > 0.1:
+			fall_direction = to_victim.normalized()
+			impact_position = victim.global_position
+	else:
+		if fall_direction.length() > 0.1:
+			fall_direction = fall_direction.normalized()
+
+	impact_position.y = 0.0
+
+	# Tilt primarily toward the selected impact direction.
+	var target_rotation: Vector3 = base["rotation"]
+	if absf(fall_direction.x) >= absf(fall_direction.z):
+		target_rotation.x += deg_to_rad(68.0) * signf(fall_direction.z)
+		target_rotation.z += deg_to_rad(12.0) * signf(fall_direction.x)
+	else:
+		target_rotation.x += deg_to_rad(12.0) * signf(fall_direction.z)
+		target_rotation.z -= deg_to_rad(68.0) * signf(fall_direction.x)
+
+	var collapse_id: String = "COLLAPSE-%02d" % (_earthquake_collapses.size() + 1)
+
+	var collapse: Dictionary = {
+		"collapse_id": collapse_id,
+		"building": building,
+		"base_position": base["position"],
+		"start_rotation": base["rotation"],
+		"target_rotation": target_rotation,
+		"fall_direction": fall_direction,
+		"impact_position": impact_position,
+		"start_time": elapsed,
+		"impact_created": false,
+		"event_reported": false,
+		"victim": victim
+	}
+
+	_earthquake_collapses.append(collapse)
+
+	# Increase logical structural damage if the city exposes building data.
+	_mark_city_building_damaged(building.global_position)
+
+	event_changed.emit(
+		"EARTHQUAKE COLLAPSE WARNING  |  %s  |  STRUCTURE FAILING"
+		% collapse_id
+	)
+
+	if victim != null and is_instance_valid(victim):
+		_mark_victim_trapped_by_collapse(
+			victim,
+			collapse_id,
+			impact_position
+		)
+
+
+func _find_best_collapse_victim() -> Node3D:
+	var best: Node3D = null
+	var best_score: float = INF
+
+	for person in civilians:
+		if not is_instance_valid(person):
+			continue
+
+		var status: String = str(person.get_meta("status", "ROAMING"))
+		if status != "ROAMING":
+			continue
+		if bool(person.get_meta("rescued", false)):
+			continue
+
+		var distance_to_epicenter: float = person.global_position.distance_to(
+			current_disaster_position
+		)
+
+		if distance_to_epicenter <= disaster_radius + 65.0:
+			if distance_to_epicenter < best_score:
+				best_score = distance_to_epicenter
+				best = person
+
+	if best != null:
+		return best
+
+	# Fallback: choose the closest still-roaming civilian so the demo can
+	# demonstrate an actual collapse→trapped→rescue chain.
+	for person in civilians:
+		if not is_instance_valid(person):
+			continue
+		if str(person.get_meta("status", "ROAMING")) != "ROAMING":
+			continue
+		if bool(person.get_meta("rescued", false)):
+			continue
+
+		var distance_to_epicenter: float = person.global_position.distance_to(
+			current_disaster_position
+		)
+		if distance_to_epicenter < best_score:
+			best_score = distance_to_epicenter
+			best = person
+
+	return best
+
+
+func _find_building_for_collapse(victim: Node3D) -> Node3D:
+	var best: Node3D = null
+	var best_distance: float = INF
+
+	if victim != null and is_instance_valid(victim):
+		for candidate in _earthquake_buildings:
+			if not is_instance_valid(candidate):
+				continue
+			var d: float = candidate.global_position.distance_to(
+				victim.global_position
+			)
+			if d < best_distance:
+				best_distance = d
+				best = candidate
+
+		if best != null:
+			return best
+
+	# No victim available: choose a structure closest to the epicenter.
+	best_distance = INF
+	for candidate in _earthquake_buildings:
+		if not is_instance_valid(candidate):
+			continue
+		var d: float = candidate.global_position.distance_to(
+			current_disaster_position
+		)
+		if d < best_distance:
+			best_distance = d
+			best = candidate
+
+	return best
+
+
+func _mark_victim_trapped_by_collapse(
+	victim: Node3D,
+	collapse_id: String,
+	impact_position: Vector3
+) -> void:
+	if not is_instance_valid(victim):
+		return
+
+	victim.set_meta("status", "TRAPPED")
+	victim.set_meta("cause", "BUILDING COLLAPSE")
+	victim.set_meta("detected", false)
+	victim.set_meta("resqnet_detected", false)
+	victim.set_meta("rescued", false)
+	victim.set_meta("priority", 10)
+	victim.set_meta("collapse_id", collapse_id)
+	victim.set_meta("collapse_impact_position", impact_position)
+	victim.set_meta("trapped_by_structure", true)
+
+	_set_civilian_beacon(victim, true)
+
+	event_changed.emit(
+		"VICTIM TRAPPED  |  %s  |  %s  |  PRIORITY 10"
+		% [victim.name, collapse_id]
+	)
+
+
+func _mark_city_building_damaged(position: Vector3) -> void:
+	if city == null:
+		return
+	if not ("buildings" in city):
+		return
+
+	var closest_index: int = -1
+	var closest_distance: float = INF
+
+	for i in range(city.buildings.size()):
+		var b = city.buildings[i]
+		if not (b is Dictionary):
+			continue
+		if not b.has("position"):
+			continue
+
+		var bp: Vector3 = b["position"]
+		var d: float = bp.distance_to(position)
+		if d < closest_distance:
+			closest_distance = d
+			closest_index = i
+
+	if closest_index >= 0 and closest_distance <= 70.0:
+		var building_data: Dictionary = city.buildings[closest_index]
+		building_data["damage"] = maxf(
+			float(building_data.get("damage", 0.0)),
+			0.85
+		)
+		city.buildings[closest_index] = building_data
+
+
+func _create_collapse_impact(position: Vector3, collapse_id: String) -> void:
+	var root := Node3D.new()
+	root.name = "CollapseImpact_%s" % collapse_id
+	root.position = position
+	add_child(root)
+	_earthquake_collapse_debris_roots.append(root)
+
+	# Central dust/impact volume.
+	var dust := MeshInstance3D.new()
+	dust.name = "CollapseDust"
+	var dust_mesh := SphereMesh.new()
+	dust_mesh.radius = 3.0
+	dust_mesh.height = 6.0
+	dust.mesh = dust_mesh
+	dust.scale = Vector3(1.0, 0.35, 1.0)
+
+	var dust_material := StandardMaterial3D.new()
+	dust_material.albedo_color = Color(0.42, 0.38, 0.32, 0.72)
+	dust_material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	dust_material.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	dust.material_override = dust_material
+	root.add_child(dust)
+
+	# Directional debris chunks.
+	for i in range(16):
+		var chunk := MeshInstance3D.new()
+		chunk.name = "FallingDebris_%02d" % i
+
+		var box := BoxMesh.new()
+		var size := rng.randf_range(0.8, 3.4)
+		box.size = Vector3(
+			size,
+			rng.randf_range(0.6, 2.2),
+			rng.randf_range(0.8, 3.0)
+		)
+		chunk.mesh = box
+
+		chunk.position = Vector3(
+			rng.randf_range(-5.0, 5.0),
+			rng.randf_range(0.5, 9.0),
+			rng.randf_range(-5.0, 5.0)
+		)
+
+		chunk.rotation = Vector3(
+			rng.randf_range(-PI, PI),
+			rng.randf_range(-PI, PI),
+			rng.randf_range(-PI, PI)
+		)
+
+		var material := StandardMaterial3D.new()
+		material.albedo_color = Color(
+			rng.randf_range(0.20, 0.42),
+			rng.randf_range(0.18, 0.36),
+			rng.randf_range(0.14, 0.30)
+		)
+		chunk.material_override = material
+		root.add_child(chunk)
+
+	# Ground impact ring.
+	var ring := MeshInstance3D.new()
+	ring.name = "ImpactRing"
+	var ring_mesh := TorusMesh.new()
+	ring_mesh.inner_radius = 2.0
+	ring_mesh.outer_radius = 2.6
+	ring_mesh.rings = 32
+	ring_mesh.ring_segments = 8
+	ring.mesh = ring_mesh
+	var ring_material := StandardMaterial3D.new()
+	ring_material.albedo_color = Color(0.16, 0.12, 0.09)
+	ring.material_override = ring_material
+	root.add_child(ring)
+
+	event_changed.emit(
+		"COLLAPSE IMPACT  |  %s  |  DEBRIS CLOUD  |  VICTIM ZONE"
+		% collapse_id
+	)
+
+
+func _clear_building_collapse_state() -> void:
+	# Restore all live building transforms from the earthquake cache.
+	for collapse in _earthquake_collapses:
+		var building: Node3D = collapse.get("building", null)
+		if building != null and is_instance_valid(building):
+			var base: Variant = _earthquake_building_base.get(
+				building.get_instance_id(),
+				null
+			)
+			if base != null:
+				building.position = base["position"]
+				building.rotation = base["rotation"]
+
+	for root in _earthquake_collapse_debris_roots:
+		if is_instance_valid(root):
+			root.queue_free()
+
+	_earthquake_collapse_debris_roots.clear()
+	_earthquake_collapses.clear()
+	_earthquake_collapse_started = false
+	_earthquake_collapse_completed = false
+
 
 func _process_flood(delta: float) -> void:
 
@@ -572,10 +1232,7 @@ func _process_flood(delta: float) -> void:
 	# +Z → -Z
 	# --------------------------------------------------------
 
-	flood_front_z -= (
-		flood_speed *
-		delta
-	)
+	flood_front_z = maxf(FLOOD_END_Z, flood_front_z - flood_speed * delta)
 
 
 	# --------------------------------------------------------
@@ -912,13 +1569,13 @@ func _spawn_flood_debris() -> void:
 
 		d.position = Vector3(
 			rng.randf_range(
-				-620.0,
-				620.0
+				-350.0,
+				350.0
 			),
 			0.5,
 			rng.randf_range(
-				470.0,
-				550.0
+				350.0,
+				358.0
 			)
 		)
 
@@ -2831,32 +3488,14 @@ func _animate_hazards() -> void:
 		)
 
 
+	# Earthquake movement is handled by the city/building visual system.
+	# Never accumulate random fire.position offsets frame after frame.
 	if quake_intensity > 0.0:
-
-		var shake: float = (
-			quake_intensity *
-			0.12
-		)
-
-
 		for fire in fires:
-
 			if is_instance_valid(fire):
-
-				fire.position += Vector3(
-					rng.randf_range(
-						-shake,
-						shake
-					),
-					rng.randf_range(
-						-shake,
-						shake
-					),
-					rng.randf_range(
-						-shake,
-						shake
-					)
-				)
+				var fire_phase: float = float(fire.get_instance_id() % 17) * 0.4
+				var fire_scale: float = 1.0 + quake_intensity * 0.12 + sin(elapsed * 18.0 + fire_phase) * 0.05
+				fire.scale = Vector3.ONE * fire_scale
 
 
 # ============================================================
@@ -2883,6 +3522,13 @@ func _set_civilian_beacon(
 
 	var material := StandardMaterial3D.new()
 
+	if bool(person.get_meta("rescued", false)):
+		material.albedo_color = Color(0.05, 1.0, 0.25)
+		material.emission_enabled = true
+		material.emission = Color(0.02, 1.0, 0.18)
+		material.emission_energy_multiplier = 8.0
+		beacon.material_override = material
+		return
 
 	if active_beacon:
 
@@ -2941,3 +3587,134 @@ func _mat(
 	material.metallic = metallic
 
 	return material
+
+# ============================================================
+# CLOSED-LOOP SEARCH / RESPONSE API
+# ============================================================
+
+func get_searchable_victims() -> Array:
+	var result: Array = []
+	for person in victims:
+		if not is_instance_valid(person):
+			continue
+		if bool(person.get_meta("rescued", false)):
+			continue
+		if bool(person.get_meta("resqnet_detected", false)):
+			continue
+		var status := str(person.get_meta("status", ""))
+		if status == "STRANDED" or status == "TRAPPED" or status == "FLOOD_STRANDED" or status == FLOOD_WALL_STRANDED or status == FLOOD_ROOFTOP_STRANDED:
+			result.append(person)
+	return result
+
+func get_victim_by_resq_id(victim_id: String) -> Node3D:
+	for person in civilians:
+		if not is_instance_valid(person):
+			continue
+		if str(person.get_meta("resqnet_victim_id", "")) == victim_id:
+			return person
+	return null
+
+func apply_response_action(victim_id: String, action: String) -> Dictionary:
+	var victim := get_victim_by_resq_id(victim_id)
+	if victim == null:
+		return {"success": false, "message": "Victim %s is not present in the Digital Twin." % victim_id}
+	var normalized := action.to_upper()
+	if bool(victim.get_meta("rescued", false)):
+		return {"success": true, "message": "Victim is already safe.", "victim_status": "RESCUED", "green_light": true}
+
+	if normalized == "MEDICAL_SUPPLY_DROP":
+		victim.set_meta("medical_supplied", true)
+		victim.set_meta("status", "RESCUED")
+		victim.set_meta("rescued", true)
+		victim.set_meta("hazard_mitigation", 0.35)
+		_set_civilian_beacon(victim, false)
+		_create_relief_zone(victim, Color(0.1, 0.9, 0.55))
+		_set_response_label(victim, "RESCUED • MEDICAL STABILIZED", Color(0.2, 1.0, 0.55))
+		event_changed.emit("MEDICAL RESPONSE  |  %s  |  SURVIVOR STABILIZED  |  GREEN SAFE STATE" % victim_id)
+		return {"success": true, "message": "Medical response completed; survivor stabilized and marked safe.", "victim_status": "RESCUED", "green_light": true}
+
+	if normalized == "HEAVY_EXTRICATION" or normalized == "STRUCTURAL_SURVEY":
+		victim.set_meta("extrication_complete", true)
+		victim.set_meta("hazard_mitigation", 1.0)
+		_create_relief_zone(victim, Color(0.1, 0.9, 0.55))
+		_set_response_label(victim, "RESCUED • EXTRICATION COMPLETE", Color(0.2, 1.0, 0.3))
+		if city != null and "buildings" in city:
+			for b in city.buildings:
+				if b is Dictionary and b.has("position"):
+					var bp: Vector3 = b["position"]
+					if Vector2(bp.x, bp.z).distance_to(Vector2(victim.position.x, victim.position.z)) < 55.0:
+						b["damage"] = maxf(0.0, float(b.get("damage", 0.0)) * 0.45)
+		victim.set_meta("rescued", true)
+		victim.set_meta("status", "RESCUED")
+		_set_civilian_beacon(victim, false)
+		event_changed.emit("HEAVY LIFT  |  %s  |  EXTRICATION COMPLETE  |  SURVIVOR SAFE" % victim_id)
+		return {"success": true, "message": "Extrication completed; survivor marked safe and local structural risk reduced.", "victim_status": "RESCUED", "green_light": true}
+
+	if normalized == "RESCUE_EXTRACTION" or normalized == "RESCUE_TRIAGE":
+		victim.set_meta("status", "RESCUED")
+		victim.set_meta("rescued", true)
+		victim.set_meta("hazard_mitigation", 1.0)
+		victim.set_meta("rescue_completed_at", Time.get_unix_time_from_system())
+		_set_civilian_beacon(victim, false)
+		_create_relief_zone(victim, Color(0.1, 1.0, 0.3))
+		_set_response_label(victim, "RESCUED • SAFE", Color(0.2, 1.0, 0.3))
+		event_changed.emit("RESCUE COMPLETE  |  %s  |  SURVIVOR EXTRACTED  |  GREEN SAFE LIGHT" % victim_id)
+		return {"success": true, "message": "Survivor extracted and local zone marked safe.", "victim_status": "RESCUED", "green_light": true}
+
+	return {"success": false, "message": "Unsupported response action %s." % action}
+
+func _set_response_label(victim: Node3D, text: String, label_color: Color) -> void:
+	var victim_id := str(victim.get_meta("resqnet_victim_id", victim.name))
+	if response_labels.has(victim_id) and is_instance_valid(response_labels[victim_id]):
+		response_labels[victim_id].queue_free()
+	var label := Label3D.new()
+	label.text = text
+	label.font_size = 32
+	label.outline_size = 7
+	label.modulate = label_color
+	label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
+	label.position = victim.position + Vector3(0.0, 9.0, 0.0)
+	add_child(label)
+	response_labels[victim_id] = label
+
+func _create_relief_zone(victim: Node3D, zone_color: Color) -> void:
+	var victim_id := str(victim.get_meta("resqnet_victim_id", victim.name))
+	if response_relief_zones.has(victim_id):
+		return
+	var zone := MeshInstance3D.new()
+	zone.name = "SAFE-ZONE-" + victim_id
+	var mesh := CylinderMesh.new()
+	mesh.top_radius = 18.0
+	mesh.bottom_radius = 18.0
+	mesh.height = 0.12
+	zone.mesh = mesh
+	zone.position = victim.position + Vector3(0.0, 0.08, 0.0)
+	var material := StandardMaterial3D.new()
+	material.albedo_color = Color(zone_color.r, zone_color.g, zone_color.b, 0.35)
+	material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	material.emission_enabled = true
+	material.emission = zone_color
+	material.emission_energy_multiplier = 2.5
+	zone.material_override = material
+	add_child(zone)
+	response_relief_zones[victim_id] = zone
+
+func _update_response_relief(delta: float) -> void:
+	for victim_id in response_relief_zones.keys():
+		var zone = response_relief_zones[victim_id]
+		if not is_instance_valid(zone):
+			response_relief_zones.erase(victim_id)
+			continue
+		zone.rotation.y += delta * 0.35
+		var pulse := 1.0 + sin(elapsed * 3.0) * 0.08
+		zone.scale = Vector3.ONE * pulse
+		if response_labels.has(victim_id) and is_instance_valid(response_labels[victim_id]):
+			var victim := get_victim_by_resq_id(victim_id)
+			if victim != null:
+				response_labels[victim_id].position = victim.position + Vector3(0.0, 9.0, 0.0)
+		for fire in fires:
+			if is_instance_valid(fire) and fire.global_position.distance_to(zone.global_position) < 55.0:
+				fire.scale = fire.scale.lerp(Vector3.ONE * 0.18, delta * 0.15)
+				if fire.scale.x < 0.22:
+					fire.queue_free()
+					fires.erase(fire)

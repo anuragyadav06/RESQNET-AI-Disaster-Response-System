@@ -1,13 +1,14 @@
 import React, { useState, useEffect } from 'react';
-import { DroneEntity, Victim } from '../types';
+import { DroneEntity, Victim, WorldStateSnapshot } from '../types';
 import { api } from '../services/api';
 import { Shield, Battery, Radio, Gauge, Navigation, Send, RotateCcw, Zap } from 'lucide-react';
 
 interface DroneFleetViewProps {
   onRefresh: () => void;
+  snapshot: WorldStateSnapshot | null;
 }
 
-export const DroneFleetView: React.FC<DroneFleetViewProps> = ({ onRefresh }) => {
+export const DroneFleetView: React.FC<DroneFleetViewProps> = ({ onRefresh, snapshot }) => {
   const [drones, setDrones] = useState<DroneEntity[]>([]);
   const [victims, setVictims] = useState<Victim[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
@@ -29,8 +30,12 @@ export const DroneFleetView: React.FC<DroneFleetViewProps> = ({ onRefresh }) => 
   };
 
   useEffect(() => {
-    fetchFleet();
-  }, []);
+    if (snapshot) {
+      setDrones(Object.values(snapshot.drones));
+      setVictims(Object.values(snapshot.victims));
+      setLoading(false);
+    } else fetchFleet();
+  }, [snapshot]);
 
   const handleManualDispatch = async (droneId: string) => {
     if (!targetVictimId) {
@@ -38,7 +43,8 @@ export const DroneFleetView: React.FC<DroneFleetViewProps> = ({ onRefresh }) => 
       return;
     }
     try {
-      const res = await api.dispatchDrone(droneId, targetVictimId);
+      const objective = selectedDrone?.capabilities.includes('RESCUE') ? 'RESCUE_EXTRACTION' : selectedDrone?.capabilities.includes('MEDICAL') ? 'MEDICAL_SUPPLY_DROP' : selectedDrone?.capabilities.includes('HEAVY_LIFT') ? 'HEAVY_EXTRICATION' : undefined;
+      const res = await api.dispatchDrone(droneId, targetVictimId, objective);
       setMsg(res.message || `Dispatched ${droneId}`);
       setSelectedDrone(null);
       fetchFleet();

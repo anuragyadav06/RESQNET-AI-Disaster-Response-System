@@ -66,6 +66,76 @@ app.add_middleware(
 app.include_router(api_router, prefix=settings.API_V1_STR)
 
 
+
+async def _reconcile_simulation_event(payload: dict) -> None:
+    """Apply authoritative System-B mission/response lifecycle changes to System A."""
+    event = str(payload.get("event", payload.get("event_type", ""))).upper()
+    mission_id = str(payload.get("mission_id", ""))
+    victim_id = str(payload.get("victim_id", ""))
+    drone_id = str(payload.get("drone_id", ""))
+    success = bool(payload.get("success", False))
+
+    if mission_id and mission_id in world_state.missions:
+        mission = world_state.missions[mission_id]
+        if event == "RESPONSE_ON_SITE":
+            from app.schemas.mission import MissionStatus
+            mission.status = MissionStatus.IN_PROGRESS
+        elif event == "RESPONSE_COMPLETED":
+            from app.schemas.mission import MissionStatus
+            mission.status = MissionStatus.COMPLETED if success else MissionStatus.FAILED
+            mission.completed_at = time.time()
+            if not success:
+                mission.failure_reason = str(payload.get("message", "Digital Twin response failed"))
+
+    if drone_id and drone_id in world_state.drones:
+        drone = world_state.drones[drone_id]
+        if event == "RESPONSE_ON_SITE":
+            from app.schemas.drone import DroneStatus
+            drone.status = DroneStatus.ON_SITE
+        elif event in {"RESPONSE_COMPLETED", "RESPONSE_FAILED"}:
+            from app.schemas.drone import DroneStatus
+            drone.status = DroneStatus.RETURNING
+
+    if victim_id and victim_id in world_state.victims:
+        victim = world_state.victims[victim_id]
+        from app.schemas.victim import VictimStatus
+        if event in {"VICTIM_TRAPPED", "TRAPPED_VICTIM", "VICTIM_COLLAPSE_TRAPPED"}:
+            victim.status = VictimStatus.TRAPPED
+            victim.priority_class = victim.priority_class.__class__.CRITICAL
+            victim.priority_score = max(victim.priority_score, 0.99)
+            victim.notes.append(str(payload.get("message", "Victim trapped by structural collapse.")))
+        elif event == "RESPONSE_DISPATCHED":
+            victim.status = VictimStatus.EN_ROUTE
+            victim.assigned_drone_id = drone_id or victim.assigned_drone_id
+        elif event == "RESPONSE_ON_SITE":
+            victim.status = VictimStatus.EN_ROUTE
+            victim.assigned_drone_id = drone_id or victim.assigned_drone_id
+        elif event == "RESPONSE_COMPLETED" and success:
+            action = str(payload.get("action", "")).upper()
+            if action == "RESCUE_EXTRACTION":
+                victim.status = VictimStatus.RESCUED
+            elif action == "MEDICAL_SUPPLY_DROP":
+                victim.status = VictimStatus.ASSISTED
+            elif action in {"HEAVY_EXTRICATION", "STRUCTURAL_SURVEY"}:
+                victim.status = VictimStatus.RESCUED
+            else:
+                victim.status = VictimStatus.TRIAGED
+            if action in {"RESCUE_EXTRACTION", "HEAVY_EXTRICATION"}:
+                victim.assigned_drone_id = drone_id or victim.assigned_drone_id
+
+    world_state.increment_version()
+    await event_bus.publish("DIGITAL_TWIN_RESPONSE", payload, source="SYSTEM_B")
+    await connection_manager.broadcast_to_frontend({
+        "type": "EVENT",
+        "event": {
+            "event_type": "DIGITAL_TWIN_RESPONSE",
+            "payload": payload,
+            "timestamp": time.time(),
+            "source": "SYSTEM_B",
+        },
+    })
+
+
 # ============================================================================
 # WEBSOCKET ENDPOINTS
 # ============================================================================
@@ -165,8 +235,22 @@ async def websocket_simulation_endpoint(websocket: WebSocket, session_id: str):
                     "event": {"event_type": "SIMULATION_STATE", "state": state, "timestamp": time.time()}
                 })
 
+            elif msg_type == "SIMULATION_FRAME":
+                world_state.simulation_frame_base64 = str(data.get("image_base64", ""))
+                world_state.simulation_frame_mime_type = str(data.get("image_mime_type", "image/jpeg"))
+                world_state.simulation_frame_timestamp = float(data.get("timestamp", time.time()))
+                await connection_manager.broadcast_to_frontend({
+                    "type": "SIMULATION_FRAME",
+                    "image_base64": world_state.simulation_frame_base64,
+                    "image_mime_type": world_state.simulation_frame_mime_type,
+                    "timestamp": world_state.simulation_frame_timestamp,
+                })
+
             elif msg_type == "EVENT":
-                payload = data.get("payload", {})
+                payload = data.get("payload", data.get("event", {}))
+                if not isinstance(payload, dict):
+                    payload = {}
+                await _reconcile_simulation_event(payload)
                 await event_bus.publish(
                     str(data.get("event_type", "SIMULATION_EVENT")),
                     payload,

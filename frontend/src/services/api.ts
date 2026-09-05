@@ -70,6 +70,19 @@ export const api = {
     });
     return handleResponse<any>(res);
   },
+  async executeOperatorCommand(text: string): Promise<any> {
+    const res = await fetch(`${API_BASE}/voice/execute`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text }),
+    });
+    return handleResponse<any>(res);
+  },
+
+  // Backward-compatible alias for existing screens.
+  async executeVoiceCommand(text: string): Promise<any> {
+    return this.executeOperatorCommand(text);
+  },
 
   async listMissions(): Promise<MissionPlan[]> {
     const res = await fetch(`${API_BASE}/missions`);
@@ -83,6 +96,16 @@ export const api = {
 
   async abortMission(mission_id: string): Promise<any> {
     const res = await fetch(`${API_BASE}/missions/${mission_id}/abort`, { method: 'POST' });
+    return handleResponse<any>(res);
+  },
+
+  async abortDroneMission(drone_id: string): Promise<any> {
+    const res = await fetch(`${API_BASE}/drones/${drone_id}/abort-mission`, { method: 'POST' });
+    return handleResponse<any>(res);
+  },
+
+  async rtbDrone(drone_id: string): Promise<any> {
+    const res = await fetch(`${API_BASE}/drones/${drone_id}/rtb`, { method: 'POST' });
     return handleResponse<any>(res);
   },
 

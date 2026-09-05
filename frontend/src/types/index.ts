@@ -14,7 +14,7 @@ export interface DroneEntity {
   id: string;
   callsign: string;
   model_name: string;
-  capabilities: ('SCOUT' | 'MEDICAL' | 'HEAVY_LIFT' | 'RELAY' | 'INSPECTION')[];
+  capabilities: ('SCOUT' | 'MEDICAL' | 'HEAVY_LIFT' | 'RELAY' | 'INSPECTION' | 'RESCUE')[];
   position: Vector3D;
   velocity: Vector3D;
   heading: number;
@@ -75,7 +75,7 @@ export interface Victim {
   uncertainty_state: UncertaintyState;
   priority_score: number;
   priority_class: SeverityLevel;
-  status: 'DETECTED' | 'TRIAGED' | 'EN_ROUTE' | 'ASSISTED' | 'EVACUATED';
+  status: 'DETECTED' | 'TRAPPED' | 'TRIAGED' | 'EN_ROUTE' | 'ASSISTED' | 'EVACUATED' | 'RESCUED';
   assigned_drone_id?: string;
   assigned_mission_id?: string;
   detected_at: number;
@@ -178,7 +178,7 @@ export interface RiskAssessment {
 
 export interface MissionPlan {
   mission_id: string;
-  objective: 'RESCUE_TRIAGE' | 'MEDICAL_SUPPLY_DROP' | 'STRUCTURAL_SURVEY' | 'COMMS_RELAY' | 'PERIMETER_PATROL' | 'RETURN_TO_BASE';
+  objective: 'RESCUE_TRIAGE' | 'MEDICAL_SUPPLY_DROP' | 'STRUCTURAL_SURVEY' | 'COMMS_RELAY' | 'PERIMETER_PATROL' | 'RETURN_TO_BASE' | 'RESCUE_EXTRACTION' | 'HEAVY_EXTRICATION';
   target_victim_id?: string;
   target_incident_id?: string;
   assigned_drone_id: string;
@@ -225,10 +225,14 @@ export interface WorldStateSnapshot {
   road_nodes: Record<string, RoadNode>;
   road_edges: Record<string, RoadEdge>;
   facilities: Record<string, Facility>;
+  missions: Record<string, MissionPlan>;
   environment: EnvironmentalConditions;
   telemetry_rate_hz: number;
   command_latency_ms: number;
   stale_entities_count: number;
+  simulation_frame_base64?: string;
+  simulation_frame_mime_type?: string;
+  simulation_frame_timestamp?: number;
 }
 
 export interface HealthStatus {

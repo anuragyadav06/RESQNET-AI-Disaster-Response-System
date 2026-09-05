@@ -440,6 +440,7 @@
 .map-victim.high { background: #bd670d; }
 .map-victim.medium { background: #a7890a; }
 .map-victim.low { background: #43846a; }
+.map-victim.rescued { background: #18a558; box-shadow: 0 0 0 3px rgba(24,165,88,.18), 0 0 12px rgba(24,165,88,.55); }
 .map-drone {
   position: absolute;
   transform: translate(-50%, -50%);

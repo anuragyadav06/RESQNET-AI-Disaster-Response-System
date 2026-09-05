@@ -13,6 +13,7 @@ class DroneCapability(str, Enum):
     HEAVY_LIFT = "HEAVY_LIFT"
     RELAY = "RELAY"
     INSPECTION = "INSPECTION"
+    RESCUE = "RESCUE"
 
 
 class DroneStatus(str, Enum):

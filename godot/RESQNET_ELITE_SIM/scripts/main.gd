@@ -143,7 +143,11 @@ func _ready() -> void:
 	add_child(client)
 	attach_system_a_client(client)
 
-	_start_demo_after_delay()
+	# IMPORTANT: startup is intentionally non-destructive.
+	# Do NOT auto-start any disaster when the Digital Twin opens.
+	# Earthquake / fire / flood can only begin from explicit operator input
+	# or an authenticated System-A remote command.
+	_on_event("SYSTEM B  |  READY  |  DISASTER ENGINE STANDBY")
 
 
 # ============================================================
@@ -1066,35 +1070,16 @@ func _build_ui() -> void:
 # ============================================================
 
 func _start_demo_after_delay() -> void:
-
-	var timer: SceneTreeTimer = get_tree().create_timer(
-		2.5
-	)
-
-	timer.timeout.connect(
-		_begin_demo
-	)
+	# Retained as a compatibility hook for older scenes/scripts.
+	# It deliberately does nothing: RESQNET must never create a disaster
+	# automatically merely because the simulation has launched.
+	_on_event("SYSTEM B  |  STARTUP AUTO-DISASTER DISABLED")
 
 
 func _begin_demo() -> void:
-
-	if demo_started:
-		return
-
-	demo_started = true
-
-
-	if disaster != null:
-		disaster.start_demo()
-
-
-	if fleet != null:
-		fleet.start_demo()
-
-
-	_on_event(
-		"SYSTEM B  |  AUTONOMOUS DISASTER RESPONSE INITIALIZED"
-	)
+	# Legacy compatibility entry point. If called explicitly, it behaves
+	# like an operator-triggered earthquake. It is never called by _ready().
+	_trigger_demo()
 
 
 # ============================================================

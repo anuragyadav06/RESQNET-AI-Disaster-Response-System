@@ -1,13 +1,14 @@
 import React, { useState, useEffect } from 'react';
-import { IncidentEntity } from '../types';
+import { IncidentEntity, WorldStateSnapshot } from '../types';
 import { api } from '../services/api';
 import { Flame, AlertTriangle, ShieldAlert, Plus, CheckCircle, Clock } from 'lucide-react';
 
 interface IncidentManagementProps {
   onRefresh: () => void;
+  snapshot: WorldStateSnapshot | null;
 }
 
-export const IncidentManagement: React.FC<IncidentManagementProps> = ({ onRefresh }) => {
+export const IncidentManagement: React.FC<IncidentManagementProps> = ({ onRefresh, snapshot }) => {
   const [incidents, setIncidents] = useState<IncidentEntity[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [showModal, setShowModal] = useState<boolean>(false);
@@ -32,8 +33,9 @@ export const IncidentManagement: React.FC<IncidentManagementProps> = ({ onRefres
   };
 
   useEffect(() => {
-    fetchIncidents();
-  }, []);
+    if (snapshot) setIncidents(Object.values(snapshot.incidents));
+    else fetchIncidents();
+  }, [snapshot]);
 
   const handleCreateIncident = async (e: React.FormEvent) => {
     e.preventDefault();

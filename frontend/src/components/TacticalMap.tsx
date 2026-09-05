@@ -1,28 +1,16 @@
-import React, { useState, useRef, useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import {
   WorldStateSnapshot,
   DroneEntity,
-  Victim,
-  HazardZone,
-  Building,
-  RoadEdge,
-  RoadNode,
 } from '../types';
 import {
-  Navigation,
-  AlertTriangle,
-  Flame,
-  Shield,
-  Hospital,
   ZoomIn,
   ZoomOut,
   RotateCcw,
   Eye,
   Crosshair,
-  Radio,
-  Zap,
+  Navigation,
 } from 'lucide-react';
-import { api } from '../services/api';
 
 interface TacticalMapProps {
   snapshot: WorldStateSnapshot | null;
@@ -30,361 +18,399 @@ interface TacticalMapProps {
   onSelectEntity: (entity: any, type: string) => void;
 }
 
+/**
+ * RESQNET Tactical Radar
+ *
+ * Design goals:
+ * - The entire authoritative -360m..+360m Digital Twin is always visible.
+ * - No manual browser resizing is required to understand the map.
+ * - 31 drones remain visually distinguishable by role:
+ *     SCOUT      = cyan
+ *     MEDICAL    = green
+ *     HEAVY LIFT = orange
+ *     RESCUE     = red
+ * - Standby drones are compact symbols without 31 large text labels.
+ * - Active response drones get a stronger halo and label.
+ * - Completed victims are removed from this operational radar, but remain
+ *   in the authoritative snapshot and therefore remain available to the
+ *   Victim Intelligence page/history.
+ */
 export const TacticalMap: React.FC<TacticalMapProps> = ({
   snapshot,
   selectedEntity,
   onSelectEntity,
 }) => {
-  // Pan and Zoom state
-  const [zoom, setZoom] = useState<number>(1.35);
-  const [pan, setPan] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
-  const [isDragging, setIsDragging] = useState<boolean>(false);
-  const [dragStart, setDragStart] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
-
-  // Filter toggles
+  const [zoom, setZoom] = useState<number>(1);
   const [showDrones, setShowDrones] = useState<boolean>(true);
   const [showVictims, setShowVictims] = useState<boolean>(true);
   const [showHazards, setShowHazards] = useState<boolean>(true);
-  const [showRoads, setShowRoads] = useState<boolean>(true);
+  const [showRoads, setShowRoads] = useState<boolean>(false);
   const [showBuildings, setShowBuildings] = useState<boolean>(true);
-  const [showPaths, setShowPaths] = useState<boolean>(true);
+  const [showLegend, setShowLegend] = useState<boolean>(true);
 
-  const containerRef = useRef<HTMLDivElement | null>(null);
+  const mapWidth = 1200;
+  const mapHeight = 720;
+  const worldMin = -360;
+  const worldMax = 360;
+  const worldExtent = worldMax - worldMin;
 
-  // Map coordinate transformation (-180m to +180m world coords -> SVG viewport 800x800)
-  const mapWidth = 800;
-  const mapHeight = 800;
-  const worldExtent = 380; // Total world range meters
+  const toSvgX = (x: number) =>
+    ((Math.max(worldMin, Math.min(worldMax, Number(x) || 0)) - worldMin) / worldExtent) * mapWidth;
 
-  const toSvgX = (x: number) => {
-    const norm = (x + worldExtent / 2) / worldExtent;
-    return norm * mapWidth;
-  };
+  const toSvgY = (z: number) =>
+    ((Math.max(worldMin, Math.min(worldMax, Number(z) || 0)) - worldMin) / worldExtent) * mapHeight;
 
-  const toSvgY = (z: number) => {
-    // Z in world space is North-South, map Y is inverted (top is North)
-    const norm = (z + worldExtent / 2) / worldExtent;
-    return norm * mapHeight;
-  };
+  const roadEdges = useMemo(
+    () => (snapshot ? Object.values(snapshot.road_edges || {}) : []),
+    [snapshot],
+  );
 
-  // Mouse drag handling
-  const handleMouseDown = (e: React.MouseEvent) => {
-    if (e.button === 0) {
-      setIsDragging(true);
-      setDragStart({ x: e.clientX - pan.x, y: e.clientY - pan.y });
-    }
-  };
+  const roadNodes = useMemo(
+    () => snapshot?.road_nodes || {},
+    [snapshot],
+  );
 
-  const handleMouseMove = (e: React.MouseEvent) => {
-    if (isDragging) {
-      setPan({
-        x: e.clientX - dragStart.x,
-        y: e.clientY - dragStart.y,
+  const drones = useMemo(
+    () => (snapshot ? Object.values(snapshot.drones || {}) as DroneEntity[] : []),
+    [snapshot],
+  );
+
+  const victims = useMemo(
+    () => {
+      if (!snapshot) return [];
+      return Object.values(snapshot.victims || {}).filter((victim: any) => {
+        const status = String(victim.status || '').toUpperCase();
+        // Operational radar shows only unresolved / actionable victims.
+        // Terminal records remain in snapshot and Victim Intelligence.
+        return ![
+          'RESCUED',
+          'ASSISTED',
+          'EVACUATED',
+          'TREATED',
+          'STABILIZED',
+          'MEDICALLY_STABILIZED',
+          'RESOLVED',
+          'SAFE',
+        ].includes(status);
       });
+    },
+    [snapshot],
+  );
+
+  const activeVictimCount = victims.length;
+  const completedVictimCount = useMemo(() => {
+    if (!snapshot) return 0;
+    return Object.values(snapshot.victims || {}).filter((victim: any) =>
+      [
+        'RESCUED',
+        'ASSISTED',
+        'EVACUATED',
+        'TREATED',
+        'STABILIZED',
+        'MEDICALLY_STABILIZED',
+        'RESOLVED',
+        'SAFE',
+      ].includes(String(victim.status || '').toUpperCase()),
+    ).length;
+  }, [snapshot]);
+
+  const droneRole = (drone: any): string => {
+    // The backend DroneEntity schema exposes capabilities rather than a
+    // dedicated drone_type field. Resolve the visual role from every reliable
+    // identifier so the radar never paints response drones as scouts.
+    const rawType = String(
+      drone.drone_type || drone.type || drone.role || drone.drone_role || ''
+    ).toUpperCase().replace(/[-_]/g, ' ');
+
+    const capabilities = Array.isArray(drone.capabilities)
+      ? drone.capabilities.map((value: unknown) => String(value).toUpperCase().replace(/[-_]/g, ' '))
+      : [];
+
+    const callsign = String(drone.callsign || '').toUpperCase();
+    const droneId = String(drone.id || '').toUpperCase();
+    const modelName = String(drone.model_name || '').toUpperCase();
+
+    // Resolve role deterministically. Fleet prefixes are authoritative here:
+    // S = SCOUT, M = MEDICAL, H = HEAVY LIFT, R = RESCUE.
+    // This prevents a scout from being misclassified as RESCUE by a loose
+    // substring check such as `includes("R ")`.
+    const hasCapability = (name: string) =>
+      capabilities.some((cap: string) => cap === name || cap.includes(name));
+
+    if (
+      hasCapability('HEAVY LIFT') || hasCapability('HEAVYLIFT') ||
+      rawType.includes('HEAVY LIFT') || rawType.includes('HEAVYLIFT') ||
+      callsign.includes('HEAVY') || droneId.includes('HEAVY') || modelName.includes('HEAVY') ||
+      /^DRONE[-_ ]?H(?:\\d|[-_ ])/.test(droneId) || /^H(?:\\d|[-_ ])/.test(callsign)
+    ) return 'HEAVY LIFT';
+
+    if (
+      hasCapability('MEDICAL') || rawType.includes('MEDICAL') ||
+      callsign.includes('MEDICAL') || droneId.includes('MEDICAL') || modelName.includes('MEDICAL') ||
+      /^DRONE[-_ ]?M(?:\\d|[-_ ])/.test(droneId) || /^M(?:\\d|[-_ ])/.test(callsign)
+    ) return 'MEDICAL';
+
+    if (
+      hasCapability('RESCUE') || rawType.includes('RESCUE') ||
+      callsign.includes('RESCUE') || droneId.includes('RESCUE') || modelName.includes('RESCUE') ||
+      /^DRONE[-_ ]?R(?:\\d|[-_ ])/.test(droneId) || /^R(?:\\d|[-_ ])/.test(callsign)
+    ) return 'RESCUE';
+
+    if (
+      hasCapability('SCOUT') || rawType.includes('SCOUT') ||
+      callsign.includes('SCOUT') || droneId.includes('SCOUT') || modelName.includes('SCOUT') ||
+      /^DRONE[-_ ]?S(?:\\d|[-_ ])/.test(droneId) || /^S(?:\\d|[-_ ])/.test(callsign)
+    ) return 'SCOUT';
+
+    if (hasCapability('INSPECTION') || rawType.includes('INSPECTION') || rawType.includes('INSPECT')) {
+      return 'INSPECTION';
+    }
+
+    // Unknown drones remain cyan rather than being incorrectly painted red.
+    return 'SCOUT';
+  };
+
+  const roleColor = (role: string): string => {
+    switch (role) {
+      case 'MEDICAL': return '#22c55e';
+      case 'HEAVY LIFT': return '#f59e0b';
+      case 'RESCUE': return '#ef4444';
+      case 'INSPECTION': return '#a78bfa';
+      default: return '#22d3ee';
     }
   };
 
-  const handleMouseUp = () => setIsDragging(false);
-
-  const handleZoom = (delta: number) => {
-    setZoom((prev) => Math.max(0.6, Math.min(3.5, prev + delta)));
+  const isStandby = (drone: any): boolean => {
+    const status = String(drone.status || drone.backend_status || '').toUpperCase();
+    const mission = String(drone.mission || '').toUpperCase();
+    return (
+      status === 'STANDBY' ||
+      status === 'IDLE' ||
+      status === 'AVAILABLE' ||
+      mission === 'STANDBY' ||
+      mission === 'IDLE'
+    );
   };
 
-  const resetView = () => {
-    setZoom(1.35);
-    setPan({ x: 0, y: 0 });
+  const isActiveResponse = (drone: any): boolean => {
+    const role = droneRole(drone);
+    return role !== 'SCOUT' && !isStandby(drone);
   };
 
-  // Road edges map
-  const roadEdges = useMemo(() => {
-    if (!snapshot) return [];
-    return Object.values(snapshot.road_edges);
-  }, [snapshot]);
-
-  // Road nodes map
-  const roadNodes = useMemo(() => {
-    if (!snapshot) return {};
-    return snapshot.road_nodes;
-  }, [snapshot]);
+  const resetView = () => setZoom(1);
 
   return (
-    <div className="relative w-full h-[620px] bg-[#090d14] rounded-xl border border-cyan-900/40 overflow-hidden shadow-2xl select-none">
-      {/* Map Control Toolbar */}
-      <div className="absolute top-3 left-3 z-30 flex items-center gap-1.5 bg-[#0e1626]/90 backdrop-blur-md px-3 py-1.5 rounded-lg border border-cyan-800/40 text-xs text-slate-300">
-        <span className="text-cyan-400 font-bold uppercase tracking-wider text-[11px] mr-2 flex items-center gap-1">
-          <Crosshair className="w-3.5 h-3.5 text-cyan-400 animate-pulse" /> Tactical Radar
-        </span>
-        <button
-          onClick={() => handleZoom(0.2)}
-          className="p-1.5 hover:bg-cyan-900/40 rounded transition"
-          title="Zoom In"
-        >
-          <ZoomIn className="w-4 h-4 text-cyan-300" />
-        </button>
-        <button
-          onClick={() => handleZoom(-0.2)}
-          className="p-1.5 hover:bg-cyan-900/40 rounded transition"
-          title="Zoom Out"
-        >
-          <ZoomOut className="w-4 h-4 text-cyan-300" />
-        </button>
-        <button
-          onClick={resetView}
-          className="p-1.5 hover:bg-cyan-900/40 rounded transition"
-          title="Reset View"
-        >
-          <RotateCcw className="w-4 h-4 text-slate-400" />
-        </button>
-        <div className="h-4 w-px bg-slate-700 mx-1" />
-        <span className="text-[11px] text-slate-400">Scale: {(zoom * 100).toFixed(0)}%</span>
+    <div
+      className="relative w-full h-[620px] bg-[#070c13] rounded-xl border border-cyan-900/40 overflow-hidden shadow-2xl select-none"
+      style={{ minHeight: 620 }}
+    >
+      {/* Compact toolbar */}
+      <div className="absolute top-3 left-3 right-3 z-30 flex items-center justify-between gap-3">
+        <div className="flex items-center gap-1.5 bg-[#0c1421]/95 backdrop-blur-md px-3 py-2 rounded-lg border border-cyan-800/40 text-xs text-slate-300 shadow-lg">
+          <span className="text-cyan-400 font-bold uppercase tracking-wider text-[11px] mr-1 flex items-center gap-1">
+            <Crosshair className="w-3.5 h-3.5 animate-pulse" />
+            Tactical Radar
+          </span>
+          <button
+            onClick={() => setZoom((v) => Math.min(1.35, +(v + 0.1).toFixed(2)))}
+            className="p-1.5 hover:bg-cyan-900/40 rounded transition"
+            title="Zoom in"
+          >
+            <ZoomIn className="w-4 h-4 text-cyan-300" />
+          </button>
+          <button
+            onClick={() => setZoom((v) => Math.max(0.85, +(v - 0.1).toFixed(2)))}
+            className="p-1.5 hover:bg-cyan-900/40 rounded transition"
+            title="Zoom out"
+          >
+            <ZoomOut className="w-4 h-4 text-cyan-300" />
+          </button>
+          <button
+            onClick={resetView}
+            className="p-1.5 hover:bg-cyan-900/40 rounded transition"
+            title="Fit entire map"
+          >
+            <RotateCcw className="w-4 h-4 text-slate-400" />
+          </button>
+          <span className="ml-1 text-[10px] text-slate-500 font-mono">
+            FIT {(zoom * 100).toFixed(0)}%
+          </span>
+        </div>
+
+        <div className="flex flex-wrap justify-end items-center gap-1.5 bg-[#0c1421]/95 backdrop-blur-md px-2.5 py-2 rounded-lg border border-cyan-800/40 text-[10px] shadow-lg">
+          <span className="text-slate-500 mr-1 flex items-center gap-1">
+            <Eye className="w-3.5 h-3.5" /> Layers
+          </span>
+          <button
+            onClick={() => setShowDrones((v) => !v)}
+            className={`px-2 py-1 rounded font-mono ${showDrones ? 'bg-cyan-950 text-cyan-300 border border-cyan-700/60' : 'text-slate-500'}`}
+          >
+            Drones ({drones.length})
+          </button>
+          <button
+            onClick={() => setShowVictims((v) => !v)}
+            className={`px-2 py-1 rounded font-mono ${showVictims ? 'bg-red-950 text-red-300 border border-red-700/60' : 'text-slate-500'}`}
+          >
+            Victims ({activeVictimCount})
+          </button>
+          <button
+            onClick={() => setShowHazards((v) => !v)}
+            className={`px-2 py-1 rounded font-mono ${showHazards ? 'bg-orange-950 text-orange-300 border border-orange-700/60' : 'text-slate-500'}`}
+          >
+            Hazards ({snapshot ? Object.values(snapshot.hazards || {}).length : 0})
+          </button>
+          <button
+            onClick={() => setShowRoads((v) => !v)}
+            className={`px-2 py-1 rounded font-mono ${showRoads ? 'bg-slate-800 text-slate-200 border border-slate-600' : 'text-slate-500'}`}
+          >
+            Roads
+          </button>
+          <button
+            onClick={() => setShowBuildings((v) => !v)}
+            className={`px-2 py-1 rounded font-mono ${showBuildings ? 'bg-slate-800 text-slate-200 border border-slate-600' : 'text-slate-500'}`}
+          >
+            Buildings
+          </button>
+        </div>
       </div>
 
-      {/* Layer Filter Toggles */}
-      <div className="absolute top-3 right-3 z-30 flex items-center gap-2 bg-[#0e1626]/90 backdrop-blur-md px-3 py-1.5 rounded-lg border border-cyan-800/40 text-[11px] text-slate-300">
-        <span className="text-slate-400 mr-1 flex items-center gap-1">
-          <Eye className="w-3.5 h-3.5 text-slate-400" /> Layers:
-        </span>
-        <button
-          onClick={() => setShowDrones(!showDrones)}
-          className={`px-2 py-0.5 rounded font-mono ${
-            showDrones ? 'bg-cyan-950 text-cyan-300 border border-cyan-700/60' : 'text-slate-500 hover:text-slate-400'
-          }`}
-        >
-          Drones ({snapshot ? Object.keys(snapshot.drones).length : 0})
-        </button>
-        <button
-          onClick={() => setShowVictims(!showVictims)}
-          className={`px-2 py-0.5 rounded font-mono ${
-            showVictims ? 'bg-red-950 text-red-300 border border-red-700/60' : 'text-slate-500 hover:text-slate-400'
-          }`}
-        >
-          Victims ({snapshot ? Object.keys(snapshot.victims).length : 0})
-        </button>
-        <button
-          onClick={() => setShowHazards(!showHazards)}
-          className={`px-2 py-0.5 rounded font-mono ${
-            showHazards ? 'bg-orange-950 text-orange-300 border border-orange-700/60' : 'text-slate-500 hover:text-slate-400'
-          }`}
-        >
-          Hazards ({snapshot ? Object.keys(snapshot.hazards).length : 0})
-        </button>
-        <button
-          onClick={() => setShowRoads(!showRoads)}
-          className={`px-2 py-0.5 rounded font-mono ${
-            showRoads ? 'bg-slate-800 text-slate-200 border border-slate-600' : 'text-slate-500 hover:text-slate-400'
-          }`}
-        >
-          Roads
-        </button>
-        <button
-          onClick={() => setShowBuildings(!showBuildings)}
-          className={`px-2 py-0.5 rounded font-mono ${
-            showBuildings ? 'bg-slate-800 text-slate-200 border border-slate-600' : 'text-slate-500 hover:text-slate-400'
-          }`}
-        >
-          Buildings
-        </button>
-      </div>
+      {/* Live Digital Twin frame remains the visual background. */}
+      {snapshot?.simulation_frame_base64 && (
+        <div className="absolute inset-0 z-0 pointer-events-none bg-black">
+          <img
+            src={`data:${snapshot.simulation_frame_mime_type || 'image/jpeg'};base64,${snapshot.simulation_frame_base64}`}
+            alt="Live Godot Digital Twin simulation"
+            className="w-full h-full object-cover opacity-55"
+          />
+          <div className="absolute inset-0 bg-[#07101b]/35" />
+        </div>
+      )}
 
-      {/* Main Tactical SVG Canvas */}
-      <div
-        ref={containerRef}
-        className="w-full h-full cursor-grab active:cursor-grabbing overflow-hidden flex items-center justify-center"
-        onMouseDown={handleMouseDown}
-        onMouseMove={handleMouseMove}
-        onMouseUp={handleMouseUp}
-        onMouseLeave={handleMouseUp}
-      >
+      {/* Responsive tactical canvas. SVG viewBox fits the full world automatically. */}
+      <div className="absolute inset-0 overflow-hidden">
         <svg
           viewBox={`0 0 ${mapWidth} ${mapHeight}`}
-          className="w-full h-full pointer-events-auto"
-          style={{
-            transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
-            transformOrigin: 'center center',
-            transition: isDragging ? 'none' : 'transform 0.15s ease-out',
-          }}
+          preserveAspectRatio="xMidYMid meet"
+          className="absolute inset-0 w-full h-full"
+          style={{ transform: `scale(${zoom})`, transformOrigin: 'center center', transition: 'transform 160ms ease-out' }}
         >
           <defs>
-            {/* Grid background pattern */}
-            <pattern id="grid-pattern" width="40" height="40" patternUnits="userSpaceOnUse">
-              <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#132338" strokeWidth="0.8" />
+            <pattern id="rq-grid-clear" width="60" height="60" patternUnits="userSpaceOnUse">
+              <path d="M 60 0 L 0 0 0 60" fill="none" stroke="#22364b" strokeWidth="1" opacity="0.32" />
             </pattern>
-            {/* Blocked road crosshatch pattern */}
-            <pattern id="hazard-crosshatch" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
-              <rect width="4" height="8" fill="#ef4444" opacity="0.75" />
-            </pattern>
-            {/* Radial glow filters */}
-            <radialGradient id="fire-glow" cx="50%" cy="50%" r="50%">
-              <stop offset="0%" stopColor="#f97316" stopOpacity="0.85" />
-              <stop offset="60%" stopColor="#ef4444" stopOpacity="0.45" />
-              <stop offset="100%" stopColor="#ef4444" stopOpacity="0" />
-            </radialGradient>
-            <radialGradient id="radar-sweep" cx="50%" cy="50%" r="50%">
+            <radialGradient id="rq-radar-glow">
               <stop offset="0%" stopColor="#06b6d4" stopOpacity="0.08" />
-              <stop offset="100%" stopColor="#06b6d4" stopOpacity="0.0" />
+              <stop offset="100%" stopColor="#06b6d4" stopOpacity="0" />
+            </radialGradient>
+            <radialGradient id="rq-fire-glow">
+              <stop offset="0%" stopColor="#ef4444" stopOpacity="0.42" />
+              <stop offset="55%" stopColor="#f97316" stopOpacity="0.16" />
+              <stop offset="100%" stopColor="#ef4444" stopOpacity="0" />
             </radialGradient>
           </defs>
 
-          {/* 1. Radar Grid Background */}
-          <rect width={mapWidth} height={mapHeight} fill="#0a0e17" />
-          <rect width={mapWidth} height={mapHeight} fill="url(#grid-pattern)" />
+          <rect width={mapWidth} height={mapHeight} fill={snapshot?.simulation_frame_base64 ? 'transparent' : '#070c13'} />
+          <rect width={mapWidth} height={mapHeight} fill="url(#rq-grid-clear)" />
 
-          {/* Radar Circles */}
-          <circle cx={mapWidth / 2} cy={mapHeight / 2} r="120" fill="none" stroke="#17314d" strokeWidth="1" strokeDasharray="3 3" />
-          <circle cx={mapWidth / 2} cy={mapHeight / 2} r="240" fill="none" stroke="#17314d" strokeWidth="1" strokeDasharray="4 4" />
-          <circle cx={mapWidth / 2} cy={mapHeight / 2} r="360" fill="none" stroke="#17314d" strokeWidth="1" strokeDasharray="6 6" />
-          <circle cx={mapWidth / 2} cy={mapHeight / 2} r="360" fill="url(#radar-sweep)" />
+          {/* Only two range rings: less visual noise than the previous three. */}
+          <circle cx={mapWidth / 2} cy={mapHeight / 2} r="155" fill="none" stroke="#17314d" strokeWidth="1" strokeDasharray="4 5" />
+          <circle cx={mapWidth / 2} cy={mapHeight / 2} r="300" fill="none" stroke="#17314d" strokeWidth="1" strokeDasharray="5 7" />
+          <circle cx={mapWidth / 2} cy={mapHeight / 2} r="300" fill="url(#rq-radar-glow)" />
 
-          {/* Crosshair Axes */}
-          <line x1={mapWidth / 2} y1="0" x2={mapWidth / 2} y2={mapHeight} stroke="#17314d" strokeWidth="1" strokeDasharray="2 4" />
-          <line x1="0" y1={mapHeight / 2} x2={mapWidth} y2={mapHeight / 2} stroke="#17314d" strokeWidth="1" strokeDasharray="2 4" />
+          <line x1={mapWidth / 2} y1="0" x2={mapWidth / 2} y2={mapHeight} stroke="#17314d" strokeWidth="1" strokeDasharray="3 7" opacity="0.65" />
+          <line x1="0" y1={mapHeight / 2} x2={mapWidth} y2={mapHeight / 2} stroke="#17314d" strokeWidth="1" strokeDasharray="3 7" opacity="0.65" />
 
-          {/* 2. District Buildings Layer */}
+          {/* Buildings */}
           {showBuildings && snapshot &&
-            Object.values(snapshot.buildings).map((b) => {
-              const bx = toSvgX(b.center.x - b.size_x / 2);
-              const by = toSvgY(b.center.z - b.size_z / 2);
-              const bw = (b.size_x / worldExtent) * mapWidth;
-              const bh = (b.size_z / worldExtent) * mapHeight;
+            Object.values(snapshot.buildings || {}).map((b: any) => {
+              const bx = toSvgX(Number(b.center?.x || 0) - Number(b.size_x || 0) / 2);
+              const by = toSvgY(Number(b.center?.z || 0) - Number(b.size_z || 0) / 2);
+              const bw = (Number(b.size_x || 0) / worldExtent) * mapWidth;
+              const bh = (Number(b.size_z || 0) / worldExtent) * mapHeight;
 
-              let fillColor = '#131e2e';
-              let strokeColor = '#1e3857';
-              if (b.damage_level === 'COLLAPSED') {
-                fillColor = '#3b1212';
-                strokeColor = '#ef4444';
-              } else if (b.damage_level === 'STRUCTURAL_CRACK') {
-                fillColor = '#3b2f12';
-                strokeColor = '#eab308';
-              }
+              const collapsed = String(b.damage_level || '').toUpperCase() === 'COLLAPSED';
+              const cracked = String(b.damage_level || '').toUpperCase() === 'STRUCTURAL_CRACK';
 
               return (
                 <g key={b.id} className="cursor-pointer" onClick={() => onSelectEntity(b, 'BUILDING')}>
                   <rect
                     x={bx}
                     y={by}
-                    width={bw}
-                    height={bh}
-                    fill={fillColor}
-                    stroke={strokeColor}
-                    strokeWidth="1.5"
+                    width={Math.max(3, bw)}
+                    height={Math.max(3, bh)}
+                    fill={collapsed ? '#35151a' : cracked ? '#332911' : '#111d2b'}
+                    stroke={collapsed ? '#ef4444' : cracked ? '#eab308' : '#29435f'}
+                    strokeWidth={collapsed ? 1.8 : 1.1}
                     rx="3"
-                    className="hover:opacity-80 transition"
                   />
-                  <text
-                    x={bx + bw / 2}
-                    y={by + bh / 2 + 3}
-                    fill="#94a3b8"
-                    fontSize="7.5"
-                    textAnchor="middle"
-                    className="font-mono font-bold pointer-events-none"
-                  >
-                    {b.name.split(' ')[0]}
-                  </text>
-                  {b.damage_level !== 'INTACT' && (
-                    <circle cx={bx + bw - 4} cy={by + 4} r="3" fill={strokeColor} />
+                  {bw > 35 && bh > 22 && (
+                    <text
+                      x={bx + bw / 2}
+                      y={by + bh / 2 + 3}
+                      fill="#647b90"
+                      fontSize="9"
+                      textAnchor="middle"
+                      className="font-mono pointer-events-none"
+                    >
+                      {String(b.name || b.id || '').split(' ')[0]}
+                    </text>
                   )}
                 </g>
               );
             })}
 
-          {/* 3. Road Network Layer */}
+          {/* Roads */}
           {showRoads && snapshot &&
-            roadEdges.map((edge) => {
-              const n1 = roadNodes[edge.from_node];
-              const n2 = roadNodes[edge.to_node];
+            roadEdges.map((edge: any) => {
+              const n1: any = roadNodes[edge.from_node];
+              const n2: any = roadNodes[edge.to_node];
               if (!n1 || !n2) return null;
 
               const x1 = toSvgX(n1.position.x);
               const y1 = toSvgY(n1.position.z);
               const x2 = toSvgX(n2.position.x);
               const y2 = toSvgY(n2.position.z);
+              const blocked = Boolean(edge.is_blocked);
 
               return (
-                <g key={edge.id} className="cursor-pointer" onClick={() => onSelectEntity(edge, 'ROAD')}>
-                  {/* Road Base */}
-                  <line
-                    x1={x1}
-                    y1={y1}
-                    x2={x2}
-                    y2={y2}
-                    stroke={edge.is_blocked ? '#ef4444' : '#1e324a'}
-                    strokeWidth={edge.is_blocked ? 6 : 4}
-                    strokeLinecap="round"
-                    strokeDasharray={edge.is_blocked ? '4 3' : 'none'}
-                    className="hover:stroke-cyan-500 transition"
-                  />
-                  {edge.is_blocked && (
-                    <line
-                      x1={x1}
-                      y1={y1}
-                      x2={x2}
-                      y2={y2}
-                      stroke="url(#hazard-crosshatch)"
-                      strokeWidth="6"
-                    />
-                  )}
-                </g>
+                <line
+                  key={edge.id}
+                  x1={x1}
+                  y1={y1}
+                  x2={x2}
+                  y2={y2}
+                  stroke={blocked ? '#ef4444' : '#263d54'}
+                  strokeWidth={blocked ? 5 : 2.5}
+                  strokeLinecap="round"
+                  strokeDasharray={blocked ? '5 4' : 'none'}
+                  opacity={0.72}
+                />
               );
             })}
 
-          {/* Road Intersections */}
-          {showRoads && snapshot &&
-            Object.values(roadNodes).map((node) => (
-              <circle
-                key={node.id}
-                cx={toSvgX(node.position.x)}
-                cy={toSvgY(node.position.z)}
-                r="3"
-                fill="#0f1b2b"
-                stroke="#334155"
-                strokeWidth="1"
-              />
-            ))}
-
-          {/* 4. Active Hazard Zones (Fires, Gas, Collapse) */}
+          {/* Hazards */}
           {showHazards && snapshot &&
-            Object.values(snapshot.hazards).map((hz) => {
+            Object.values(snapshot.hazards || {}).map((hz: any) => {
               if (!hz.active) return null;
               const hx = toSvgX(hz.center.x);
               const hy = toSvgY(hz.center.z);
-              const hr = (hz.radius_m / worldExtent) * mapWidth;
+              const hr = Math.max(8, (Number(hz.radius_m || 0) / worldExtent) * mapWidth);
 
               return (
                 <g key={hz.id} className="cursor-pointer" onClick={() => onSelectEntity(hz, 'HAZARD')}>
-                  <circle
-                    cx={hx}
-                    cy={hy}
-                    r={hr}
-                    fill="url(#fire-glow)"
-                    className="animate-pulse"
-                  />
-                  <circle
-                    cx={hx}
-                    cy={hy}
-                    r={hr}
-                    fill="none"
-                    stroke="#f97316"
-                    strokeWidth="1.5"
-                    strokeDasharray="4 3"
-                  />
+                  <circle cx={hx} cy={hy} r={hr} fill="url(#rq-fire-glow)" opacity="0.75" />
+                  <circle cx={hx} cy={hy} r={hr} fill="none" stroke="#f97316" strokeWidth="1.2" strokeDasharray="5 4" />
                   <circle cx={hx} cy={hy} r="4" fill="#ef4444" />
-                  <text
-                    x={hx}
-                    y={hy - hr - 4}
-                    fill="#f97316"
-                    fontSize="9"
-                    textAnchor="middle"
-                    className="font-bold uppercase tracking-wider font-mono"
-                  >
-                    🔥 {hz.type} ({hz.radius_m}m)
+                  <text x={hx} y={hy - hr - 5} fill="#fb923c" fontSize="8" textAnchor="middle" className="font-mono font-bold">
+                    {String(hz.type || 'HAZARD').replace(/_/g, ' ')}
                   </text>
                 </g>
               );
             })}
 
-          {/* 5. Emergency Facilities */}
+          {/* Facilities */}
           {snapshot &&
-            Object.values(snapshot.facilities).map((fac) => {
+            Object.values(snapshot.facilities || {}).map((fac: any) => {
               const fx = toSvgX(fac.location.x);
               const fy = toSvgY(fac.location.z);
               const isBase = fac.type === 'COMMAND_HQ';
@@ -392,176 +418,171 @@ export const TacticalMap: React.FC<TacticalMapProps> = ({
               return (
                 <g key={fac.id} className="cursor-pointer" onClick={() => onSelectEntity(fac, 'FACILITY')}>
                   <rect
-                    x={fx - 14}
-                    y={fy - 14}
-                    width="28"
-                    height="28"
-                    fill={isBase ? '#0369a1' : '#047857'}
-                    stroke="#38bdf8"
-                    strokeWidth="1.5"
+                    x={fx - 13}
+                    y={fy - 13}
+                    width="26"
+                    height="26"
+                    fill={isBase ? '#075985' : '#047857'}
+                    stroke="#67e8f9"
+                    strokeWidth="1.4"
                     rx="6"
                   />
-                  <text
-                    x={fx}
-                    y={fy + 4}
-                    fill="#ffffff"
-                    fontSize="10"
-                    textAnchor="middle"
-                    className="font-bold pointer-events-none"
-                  >
+                  <text x={fx} y={fy + 4} fill="#fff" fontSize="9" textAnchor="middle" className="font-bold">
                     {isBase ? 'HQ' : 'MED'}
-                  </text>
-                  <text
-                    x={fx}
-                    y={fy + 24}
-                    fill="#38bdf8"
-                    fontSize="8"
-                    textAnchor="middle"
-                    className="font-mono font-bold"
-                  >
-                    {fac.id}
                   </text>
                 </g>
               );
             })}
 
-          {/* 6. Active Mission Flight Paths */}
-          {showPaths && snapshot &&
-            Object.values(snapshot.drones).map((drone) => {
-              const missionId = drone.current_mission_id;
-              if (!missionId) return null;
-              // Find waypoints
-              const mission = snapshot.drones[drone.id];
-              return null;
-            })}
-
-          {/* 7. Victims Layer */}
+          {/* Active victims only. Completed victims deliberately do not render. */}
           {showVictims && snapshot &&
-            Object.values(snapshot.victims).map((vic) => {
+            victims.map((vic: any) => {
               const vx = toSvgX(vic.location.x);
               const vy = toSvgY(vic.location.z);
+              const priority = String(vic.priority_class || '').toUpperCase();
 
-              let color = '#94a3b8';
-              let pulseClass = '';
-              if (vic.priority_class === 'CRITICAL') {
-                color = '#ef4444';
-                pulseClass = 'animate-ping';
-              } else if (vic.priority_class === 'HIGH') {
-                color = '#f59e0b';
-                pulseClass = 'animate-pulse';
-              } else if (vic.priority_class === 'MEDIUM') {
-                color = '#06b6d4';
-              }
+              const color =
+                priority === 'CRITICAL' ? '#ef4444' :
+                priority === 'HIGH' ? '#f59e0b' :
+                priority === 'MEDIUM' ? '#06b6d4' :
+                '#94a3b8';
 
-              if (vic.status === 'ASSISTED') {
-                color = '#10b981';
-                pulseClass = '';
-              }
+              const critical = priority === 'CRITICAL';
+              const assigned = String(vic.assigned_drone_id || '').trim();
 
               return (
                 <g key={vic.id} className="cursor-pointer" onClick={() => onSelectEntity(vic, 'VICTIM')}>
-                  {/* Ping Ring for Critical */}
-                  {vic.priority_class === 'CRITICAL' && vic.status !== 'ASSISTED' && (
-                    <circle cx={vx} cy={vy} r="16" fill="none" stroke="#ef4444" strokeWidth="1.5" opacity="0.6" className="animate-ping" />
+                  {critical && (
+                    <circle cx={vx} cy={vy} r="13" fill="none" stroke={color} strokeWidth="1.4" opacity="0.55" />
                   )}
-                  {/* Outer Beacon */}
-                  <circle cx={vx} cy={vy} r="9" fill="#0b111e" stroke={color} strokeWidth="2" />
-                  <circle cx={vx} cy={vy} r="4" fill={color} />
-                  {/* Label */}
-                  <text
-                    x={vx}
-                    y={vy - 12}
-                    fill={color}
-                    fontSize="8.5"
-                    textAnchor="middle"
-                    className="font-mono font-bold"
-                  >
-                    {vic.id} {vic.priority_class === 'CRITICAL' ? '⚠️' : ''}
+                  <circle cx={vx} cy={vy} r="7" fill="#08101d" stroke={color} strokeWidth="2" />
+                  <circle cx={vx} cy={vy} r="3" fill={color} />
+                  <text x={vx} y={vy - 11} fill={color} fontSize="8.5" textAnchor="middle" className="font-mono font-bold">
+                    {vic.id}
                   </text>
-                  {vic.assigned_drone_id && (
-                    <text
-                      x={vx}
-                      y={vy + 18}
-                      fill="#38bdf8"
-                      fontSize="7"
-                      textAnchor="middle"
-                      className="font-mono"
-                    >
-                      ← {vic.assigned_drone_id}
+                  {assigned && (
+                    <text x={vx} y={vy + 16} fill="#7dd3fc" fontSize="6.8" textAnchor="middle" className="font-mono">
+                      {assigned}
                     </text>
                   )}
                 </g>
               );
             })}
 
-          {/* 8. Drone Fleet Layer */}
-          {showDrones && snapshot &&
-            Object.values(snapshot.drones).map((drone) => {
-              const dx = toSvgX(drone.position.x);
-              const dy = toSvgY(drone.position.z);
-              const isSelected = selectedEntity && selectedEntity.id === drone.id;
+          {/* Drone fleet. Standby units are intentionally compact; active response units are prominent. */}
+          {showDrones && drones.map((drone: any) => {
+            const dx = toSvgX(drone.position?.x);
+            const dy = toSvgY(drone.position?.z);
+            const role = droneRole(drone);
+            const color = roleColor(role);
+            const standby = isStandby(drone);
+            const activeResponse = isActiveResponse(drone);
+            const selected = selectedEntity && selectedEntity.id === drone.id;
 
-              return (
-                <g
-                  key={drone.id}
-                  className="cursor-pointer"
-                  onClick={() => onSelectEntity(drone, 'DRONE')}
-                >
-                  {/* Selection Ring */}
-                  {isSelected && (
-                    <circle cx={dx} cy={dy} r="22" fill="none" stroke="#38bdf8" strokeWidth="2" strokeDasharray="3 3" className="animate-spin" />
-                  )}
+            const size = role === 'SCOUT' ? 5.2 : 6.5;
 
-                  {/* Heading & Drone Symbol */}
-                  <g transform={`translate(${dx}, ${dy}) rotate(${drone.heading})`}>
-                    {/* Propulsion Field Glow */}
-                    <circle cx="0" cy="0" r="14" fill="#0284c7" opacity="0.25" />
-                    {/* Drone Quad Wings */}
-                    <line x1="-9" y1="-9" x2="9" y2="9" stroke="#38bdf8" strokeWidth="1.5" />
-                    <line x1="-9" y1="9" x2="9" y2="-9" stroke="#38bdf8" strokeWidth="1.5" />
-                    {/* Rotor Heads */}
-                    <circle cx="-9" cy="-9" r="2.5" fill="#38bdf8" />
-                    <circle cx="9" cy="9" r="2.5" fill="#38bdf8" />
-                    <circle cx="-9" cy="9" r="2.5" fill="#38bdf8" />
-                    <circle cx="9" cy="-9" r="2.5" fill="#38bdf8" />
-                    {/* Core Pod */}
-                    <circle cx="0" cy="0" r="5" fill="#0c4a6e" stroke="#7dd3fc" strokeWidth="1.5" />
-                    {/* Forward Heading Pointer */}
-                    <polygon points="0,-12 -3,-5 3,-5" fill="#38bdf8" />
-                  </g>
+            return (
+              <g
+                key={drone.id}
+                className="cursor-pointer"
+                onClick={() => onSelectEntity(drone, 'DRONE')}
+              >
+                {selected && (
+                  <circle cx={dx} cy={dy} r="17" fill="none" stroke="#ffffff" strokeWidth="1.5" strokeDasharray="4 3" />
+                )}
 
-                  {/* Drone Callout Tag */}
-                  <g transform={`translate(${dx}, ${dy - 18})`}>
-                    <rect x="-24" y="-8" width="48" height="13" fill="#08101d" stroke="#0284c7" strokeWidth="0.8" rx="2" />
-                    <text x="0" y="1" fill="#7dd3fc" fontSize="7.5" textAnchor="middle" className="font-mono font-bold">
-                      {drone.id}
-                    </text>
-                  </g>
+                {activeResponse && (
+                  <circle cx={dx} cy={dy} r="13" fill={color} opacity="0.12" stroke={color} strokeWidth="1" />
+                )}
 
-                  {/* Battery Gauge Bar */}
-                  <g transform={`translate(${dx - 12}, ${dy + 15})`}>
-                    <rect width="24" height="3" fill="#1e293b" rx="1" />
+                {/* Compact four-arm drone symbol. Role color is the first visual cue. */}
+                <g transform={`translate(${dx} ${dy}) rotate(${Number(drone.heading || 0)})`}>
+                  <line x1={-size} y1={-size} x2={size} y2={size} stroke={color} strokeWidth={activeResponse ? 2.2 : 1.6} />
+                  <line x1={-size} y1={size} x2={size} y2={-size} stroke={color} strokeWidth={activeResponse ? 2.2 : 1.6} />
+                  <circle cx={-size} cy={-size} r={2.2} fill={color} />
+                  <circle cx={size} cy={size} r={2.2} fill={color} />
+                  <circle cx={-size} cy={size} r={2.2} fill={color} />
+                  <circle cx={size} cy={-size} r={2.2} fill={color} />
+                  <circle cx="0" cy="0" r={activeResponse ? 4.1 : 3.2} fill="#07101a" stroke={color} strokeWidth="1.5" />
+                  <polygon points="0,-9 -2.5,-4 2.5,-4" fill={color} />
+                </g>
+
+                {/* Labels only when useful. This removes the previous 31-label pile-up. */}
+                {(!standby || selected) && (
+                  <g transform={`translate(${dx} ${dy - 14})`}>
                     <rect
-                      width={Math.max(2, (drone.battery_percent / 100) * 24)}
-                      height="3"
-                      fill={drone.battery_percent > 30 ? '#10b981' : '#ef4444'}
-                      rx="1"
+                      x="-30"
+                      y="-7"
+                      width="60"
+                      height="12"
+                      fill="#07101a"
+                      stroke={color}
+                      strokeWidth="0.9"
+                      rx="2"
                     />
+                    <text x="0" y="1.5" fill={color} fontSize="7.2" textAnchor="middle" className="font-mono font-bold">
+                      {drone.id} · {role}
+                    </text>
                   </g>
-                </g>
-              );
-            })}
+                )}
+
+                {activeResponse && (
+                  <circle cx={dx} cy={dy} r="2" fill="#fff" opacity="0.9" />
+                )}
+              </g>
+            );
+          })}
         </svg>
       </div>
 
-      {/* Map Legend */}
-      <div className="absolute bottom-3 left-3 z-30 flex items-center gap-3 bg-[#0e1626]/90 backdrop-blur-md px-3 py-1.5 rounded-lg border border-cyan-800/40 text-[10px] text-slate-400 font-mono">
-        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-red-500 animate-ping"></span> Critical Victim</span>
-        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-amber-500"></span> High Victim</span>
-        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-cyan-400"></span> Drone</span>
-        <span className="flex items-center gap-1"><span className="w-2 h-2 rounded bg-orange-500"></span> Hazard Zone</span>
-        <span className="flex items-center gap-1"><span className="w-2 h-1 bg-red-500"></span> Blocked Road</span>
+      {/* Orientation / counts */}
+      <div className="absolute left-3 bottom-3 z-30 flex items-center gap-2 bg-[#0c1421]/95 backdrop-blur-md px-3 py-2 rounded-lg border border-cyan-800/40 text-[9px] font-mono shadow-lg">
+        <span className="text-cyan-300">N ↑</span>
+        <span className="text-slate-600">|</span>
+        <span className="text-slate-400">WORLD ±360m</span>
+        <span className="text-slate-600">|</span>
+        <span className="text-slate-400">{activeVictimCount} ACTIVE</span>
+        {completedVictimCount > 0 && (
+          <>
+            <span className="text-slate-600">|</span>
+            <span className="text-emerald-400">{completedVictimCount} RESOLVED / HISTORY</span>
+          </>
+        )}
       </div>
+
+      {/* Four-role legend */}
+      {showLegend && (
+        <div className="absolute right-3 bottom-3 z-30 bg-[#0c1421]/95 backdrop-blur-md px-3 py-2 rounded-lg border border-cyan-800/40 text-[9px] font-mono shadow-lg">
+          <div className="flex items-center gap-3">
+            <span className="flex items-center gap-1.5">
+              <i className="w-2.5 h-2.5 rounded-full" style={{ background: roleColor('SCOUT') }} />
+              <span className="text-cyan-300">SCOUT</span>
+            </span>
+            <span className="flex items-center gap-1.5">
+              <i className="w-2.5 h-2.5 rounded-full" style={{ background: roleColor('MEDICAL') }} />
+              <span className="text-emerald-300">MEDICAL</span>
+            </span>
+            <span className="flex items-center gap-1.5">
+              <i className="w-2.5 h-2.5 rounded-full" style={{ background: roleColor('HEAVY LIFT') }} />
+              <span className="text-amber-300">HEAVY LIFT</span>
+            </span>
+            <span className="flex items-center gap-1.5">
+              <i className="w-2.5 h-2.5 rounded-full" style={{ background: roleColor('RESCUE') }} />
+              <span className="text-red-300">RESCUE</span>
+            </span>
+          </div>
+        </div>
+      )}
+
+      {/* Small state indicator */}
+      {!snapshot && (
+        <div className="absolute inset-0 z-40 flex items-center justify-center bg-[#070c13]/80">
+          <div className="text-center">
+            <Navigation className="mx-auto mb-2 text-cyan-400" size={24} />
+            <div className="text-xs font-mono text-slate-400">Waiting for authoritative Digital Twin state…</div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

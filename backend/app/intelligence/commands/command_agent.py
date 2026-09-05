@@ -59,6 +59,8 @@ class CommandAgent:
                 "target_altitude_m": 15.0,
                 "contingency": mission.fallback_strategy,
                 "mission_id": mission.mission_id,
+                "target_victim_id": mission.target_victim_id or "",
+                "response_action": mission.objective.value,
                 "planner": "RRT_STAR",
             },
             issued_at=now,
@@ -93,6 +95,8 @@ class CommandAgent:
         )
 
         self.command_history.append(payload)
+        if not sent_to_sim:
+            return False, payload, "System B Digital Twin is not connected; command was not transmitted."
         return True, payload, f"Command {cmd_id} issued successfully (Transmitted to System B: {sent_to_sim})"
 
 

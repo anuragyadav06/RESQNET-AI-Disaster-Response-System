@@ -212,6 +212,43 @@ async def abort_mission(mission_id: str):
     return {"status": "SUCCESS", "mission_id": mission_id}
 
 
+def _resolve_drone_id(drone_id: str) -> str:
+    """Voice/operator input may omit dashes or casing (e.g. 'drone3' vs 'DRONE-3')."""
+    if drone_id in world_state.drones:
+        return drone_id
+    normalized = drone_id.upper().replace(" ", "-")
+    if normalized in world_state.drones:
+        return normalized
+    compact = normalized.replace("-", "")
+    for known_id in world_state.drones:
+        if known_id.replace("-", "") == compact:
+            return known_id
+    raise HTTPException(status_code=404, detail=f"Drone {drone_id} not found")
+
+
+@api_router.post("/drones/{drone_id}/abort-mission")
+async def abort_drone_mission(drone_id: str):
+    """Abort whatever mission the given drone is currently flying."""
+    resolved_id = _resolve_drone_id(drone_id)
+    drone = world_state.drones[resolved_id]
+    if not drone.current_mission_id:
+        raise HTTPException(status_code=409, detail=f"Drone {resolved_id} has no active mission")
+    success = await mission_agent.abort_mission(drone.current_mission_id, reason="Operator voice command: abort")
+    if not success:
+        raise HTTPException(status_code=404, detail=f"Mission {drone.current_mission_id} not found")
+    return {"status": "SUCCESS", "drone_id": resolved_id, "mission_id": drone.current_mission_id}
+
+
+@api_router.post("/drones/{drone_id}/rtb")
+async def return_drone_to_base(drone_id: str):
+    """Return-to-base: abort any active mission for the drone so it stands down."""
+    resolved_id = _resolve_drone_id(drone_id)
+    drone = world_state.drones[resolved_id]
+    if drone.current_mission_id:
+        await mission_agent.abort_mission(drone.current_mission_id, reason="Operator voice command: RTB")
+    return {"status": "SUCCESS", "drone_id": resolved_id, "message": f"{resolved_id} recalled to base"}
+
+
 # 8. Routes & Graph
 class RoutePlanRequest(BaseModel):
     start: Vector3D
@@ -306,6 +343,24 @@ async def start_recon():
 async def triage_dispatch():
     return await response_orchestrator.triage_and_dispatch()
 
+
+class ResponseDispatchRequest(BaseModel):
+    victim_id: str
+    objective: MissionObjective
+    drone_id: str = "AUTO"
+
+
+@api_router.post("/response/dispatch")
+async def dispatch_response(req: ResponseDispatchRequest):
+    """Explicit operator response dispatch; command is transmitted to System B."""
+    preferred = None if req.drone_id.upper() == "AUTO" else _resolve_drone_id(req.drone_id)
+    plan, msg = await mission_agent.create_and_dispatch_mission_for_victim(
+        req.victim_id, req.objective, preferred_drone_id=preferred
+    )
+    if not plan:
+        raise HTTPException(status_code=400, detail=msg)
+    return {"status": "SUCCESS", "mission": plan, "message": msg}
+
 @api_router.get("/response/status")
 async def response_status():
     return await response_orchestrator.status()
@@ -315,6 +370,57 @@ async def interpret_voice(req: VoiceCommandRequest):
     parsed = voice_interpreter.parse(req.text)
     await event_bus.publish("VOICE_COMMAND_INTERPRETED", {"text": req.text, **parsed}, source="OPERATOR")
     return parsed
+
+
+@api_router.post("/voice/execute")
+async def execute_voice(req: VoiceCommandRequest):
+    """Interpret and execute only supported deterministic operator intents."""
+    parsed = voice_interpreter.parse(req.text)
+    intent = str(parsed.get("intent", "UNKNOWN"))
+    params = parsed.get("parameters", {}) or {}
+
+    if intent == "START_RECON":
+        result = await response_orchestrator.start_recon()
+    elif intent == "AUTO_DISPATCH":
+        result = await response_orchestrator.triage_and_dispatch()
+    elif intent == "DISPATCH_RESPONSE":
+        objective = MissionObjective(str(params.get("objective", "RESCUE_EXTRACTION")))
+        victim_id = str(params.get("victim_id", ""))
+        plan, msg = await mission_agent.create_and_dispatch_mission_for_victim(victim_id, objective)
+        if not plan:
+            raise HTTPException(status_code=400, detail=msg)
+        result = {"status": "SUCCESS", "mission": plan, "message": msg}
+    elif intent == "GET_STATUS":
+        result = await response_orchestrator.status()
+    elif intent == "PRIORITIZE_ROOFTOP":
+        updated = await prioritization_agent.prioritize_all()
+        result = {"status": "SUCCESS", "victims": updated}
+    elif intent == "ABORT_DRONE_MISSION":
+        drone_id = _resolve_drone_id(str(params.get("drone_id", "")))
+        drone = world_state.drones[drone_id]
+        if not drone.current_mission_id:
+            raise HTTPException(status_code=409, detail=f"Drone {drone_id} has no active mission")
+        ok = await mission_agent.abort_mission(drone.current_mission_id, reason="Operator voice command: abort")
+        result = {"status": "SUCCESS" if ok else "FAILED", "drone_id": drone_id}
+    elif intent == "RTB":
+        drone_id = _resolve_drone_id(str(params.get("drone_id", "")))
+        drone = world_state.drones[drone_id]
+        if drone.current_mission_id:
+            await mission_agent.abort_mission(drone.current_mission_id, reason="Operator voice command: RTB")
+        result = {"status": "SUCCESS", "drone_id": drone_id, "message": f"{drone_id} recalled to base"}
+    elif intent == "DEPLOY_TO_SECTOR":
+        # Sector deployment is accepted only when the requested drone exists.
+        # The Digital Twin remains the authority for the resulting movement.
+        drone_id = _resolve_drone_id(str(params.get("drone_id", "")))
+        drone = world_state.drones[drone_id]
+        if drone.status.value != "IDLE":
+            raise HTTPException(status_code=409, detail=f"Drone {drone_id} is not available ({drone.status.value})")
+        result = {"status": "ACCEPTED", "drone_id": drone_id, "sector": str(params.get("sector", "")), "message": "Sector command accepted; System-B will execute the movement."}
+    else:
+        return {"status": "NOT_EXECUTED", "parsed": parsed, "message": "Command requires a supported structured target/action."}
+
+    await event_bus.publish("VOICE_COMMAND_EXECUTED", {"text": req.text, **parsed, "result": result}, source="OPERATOR")
+    return {"status": "EXECUTED", "parsed": parsed, "result": result}
 
 @api_router.get("/events/live")
 async def live_events(limit: int = Query(default=50, ge=1, le=200)):

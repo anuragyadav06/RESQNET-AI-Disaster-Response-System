@@ -8,6 +8,7 @@ from app.schemas.common import Vector3D, UncertaintyState
 from app.schemas.victim import Victim
 from app.schemas.drone import DroneEntity
 from app.schemas.incident import IncidentEntity
+from app.schemas.mission import MissionPlan
 
 
 class BuildingDamageLevel(str, Enum):
@@ -98,8 +99,12 @@ class WorldStateSnapshot(BaseModel):
     road_nodes: Dict[str, RoadNode] = Field(default_factory=dict)
     road_edges: Dict[str, RoadEdge] = Field(default_factory=dict)
     facilities: Dict[str, Facility] = Field(default_factory=dict)
+    missions: Dict[str, MissionPlan] = Field(default_factory=dict)
     environment: EnvironmentalConditions = Field(default_factory=EnvironmentalConditions)
     
     telemetry_rate_hz: float = 0.0
     command_latency_ms: float = 0.0
     stale_entities_count: int = 0
+    simulation_frame_base64: Optional[str] = None
+    simulation_frame_mime_type: Optional[str] = None
+    simulation_frame_timestamp: Optional[float] = None

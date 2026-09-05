@@ -18,9 +18,8 @@ import {
   Volume2,
   XCircle,
 } from 'lucide-react';
-import { useSystemWebSocket } from '../websocket/useSystemWebSocket';
 import { api } from '../services/api';
-import { DroneEntity, Victim } from '../types';
+import { DroneEntity, Victim, WorldStateSnapshot } from '../types';
 import './ResQNetCommandCenter.css';
 
 const priorityColor = (priority: string) => {
@@ -32,17 +31,17 @@ const priorityColor = (priority: string) => {
   }
 };
 
-const mapX = (x: number) => 50 + (x / 200) * 45;
-const mapY = (z: number) => 50 + (z / 200) * 45;
+const mapX = (x: number) => ((x + 360) / 720) * 100;
+const mapY = (z: number) => ((z + 360) / 720) * 100;
 
-export function ResQNetCommandCenter() {
-  const { snapshot, isConnected, latencyMs, refresh } = useSystemWebSocket();
+export function ResQNetCommandCenter({ snapshot, isConnected, latencyMs, refresh }: { snapshot: WorldStateSnapshot | null; isConnected: boolean; latencyMs: number; refresh: () => void }) {
   const [events, setEvents] = useState<any[]>([]);
   const [searchPlan, setSearchPlan] = useState<any>(null);
   const [busy, setBusy] = useState('');
   const [command, setCommand] = useState('');
   const [transcript, setTranscript] = useState('');
   const [response, setResponse] = useState('System ready. Awaiting operator command.');
+  const [voiceState, setVoiceState] = useState<'idle'|'listening'|'error'>('idle');
   const recognitionRef = useRef<any>(null);
 
   const loadEvents = useCallback(async () => {
@@ -108,9 +107,27 @@ export function ResQNetCommandCenter() {
       setTranscript(text);
       if (e.results[e.results.length - 1].isFinal) setCommand(text);
     };
-    rec.onerror = () => speak('Voice input failed.');
-    rec.onend = () => { recognitionRef.current = null; };
-    rec.start();
+    rec.onstart = () => setVoiceState('listening');
+    rec.onerror = (e: any) => {
+      setVoiceState('error');
+      const code = e?.error || 'unknown';
+      const messages: Record<string, string> = {
+        'no-speech': "No speech detected. Try again and speak clearly.",
+        'audio-capture': 'Microphone capture failed. Check the selected microphone.',
+        'not-allowed': 'Microphone permission is blocked. Allow microphone access for localhost:5173.',
+        'service-not-allowed': 'Browser speech recognition is disabled by the browser.',
+        'network': 'The browser speech service is unavailable. Your typed command still works; try Chrome with internet access or use text input.',
+        'aborted': 'Voice capture stopped.',
+      };
+      const msg = messages[code] ?? `Voice input failed (${code}). Type the command to continue.`;
+      if (code !== 'aborted') speak(msg);
+    };
+    rec.onend = () => { recognitionRef.current = null; setVoiceState('idle'); };
+    try { rec.start(); } catch (err: any) {
+      recognitionRef.current = null;
+      setVoiceState('error');
+      speak(`Microphone could not start. ${err?.message || 'Use the text command box.'}`);
+    }
   };
 
   const stopVoice = () => {
@@ -118,21 +135,46 @@ export function ResQNetCommandCenter() {
     recognitionRef.current = null;
   };
 
+  const INTENT_LABELS: Record<string, string> = {
+    GET_STATUS: 'get the current status',
+    START_RECON: 'start reconnaissance',
+    PRIORITIZE_ROOFTOP: 'prioritize rooftop victims',
+    AUTO_DISPATCH: 'send the nearest available drone',
+  };
+
   const runCommand = async () => {
     if (!command.trim()) return;
     try {
-      const parsed = await api.interpretVoice(command);
+      const executed = await api.executeOperatorCommand(command);
+      const parsed = executed.parsed || {};
+      const result = executed.result || {};
+      if (executed.status === 'NOT_EXECUTED') {
+        const suggestions: string[] = parsed.suggestions || [];
+        if (suggestions.length) {
+          const asPhrases = suggestions.map(s => `"${INTENT_LABELS[s] || s}"`).join(' or ');
+          speak(`I didn't quite catch that. Did you mean ${asPhrases}?`);
+        } else {
+          speak(parsed.message || 'Command not executed. Try a specific victim or drone action.');
+        }
+        return;
+      }
       if (parsed.intent === 'GET_STATUS') {
-        const status = await api.getResponseStatus();
-        speak(`System operational. ${status.available_drones} drones available, ${status.critical_victims} critical victims, and ${status.active_missions} active missions.`);
+        speak(`System operational. ${result.available_drones ?? 0} drones available, ${result.critical_victims ?? 0} critical victims, and ${result.active_missions ?? 0} active missions.`);
+      } else if (parsed.intent === 'DISPATCH_RESPONSE') {
+        const mission = result.mission;
+        speak(`Response mission ${mission?.mission_id || 'created'} dispatched to ${parsed.parameters?.victim_id || 'the victim'}.`);
       } else if (parsed.intent === 'START_RECON') {
-        await execute('Recon deployment', api.startRecon, r => `Recon plan created for ${r.drone_count} scout drones.`);
+        speak(`Reconnaissance activated for ${result.drone_count ?? 16} scout drones.`);
       } else if (parsed.intent === 'AUTO_DISPATCH') {
-        await execute('Priority response', api.triageDispatch, r => `Response cycle completed. ${r.dispatched?.length || 0} missions dispatched.`);
-      } else if (parsed.intent === 'PRIORITIZE_ROOFTOP') {
-        await execute('Victim reprioritization', api.reprioritizeVictims, () => 'Victim priorities updated for operator review.');
+        speak(`Priority response completed. ${result.dispatched?.length || 0} missions dispatched.`);
+      } else if (parsed.intent === 'ABORT_DRONE_MISSION') {
+        speak(`${parsed.parameters?.drone_id} mission aborted.`);
+      } else if (parsed.intent === 'RTB') {
+        speak(`${parsed.parameters?.drone_id} is returning to base.`);
+      } else if (parsed.intent === 'DEPLOY_TO_SECTOR') {
+        speak(`${parsed.parameters?.drone_id} accepted for ${parsed.parameters?.sector}.`);
       } else {
-        speak('Command recognized but it requires a specific manual target.');
+        speak(result.message || 'Command executed successfully.');
       }
     } catch (e: any) {
       speak(`Command failed. ${e?.message || 'Check system diagnostics.'}`);
@@ -185,7 +227,7 @@ export function ResQNetCommandCenter() {
         </article>
 
         <div className="metric-stack">
-          <Metric label="Drone fleet" value={`${idleDrones}/${drones.length || 4}`} detail="available" icon={<Navigation />} />
+          <Metric label="Drone fleet" value={`${idleDrones}/${drones.length || 31}`} detail="available" icon={<Navigation />} />
           <Metric label="Active missions" value={activeMissions.length} detail="live assignments" icon={<Crosshair />} />
           <Metric label="Critical victims" value={critical} detail={`${victims.length} tracked`} icon={<AlertTriangle />} tone="critical" />
           <Metric label="System latency" value={`${latencyMs} ms`} detail={`${snapshot?.telemetry_rate_hz?.toFixed(1) || '0.0'} Hz telemetry`} icon={<Radio />} />
@@ -209,12 +251,12 @@ export function ResQNetCommandCenter() {
                 value={command}
                 onChange={e => setCommand(e.target.value)}
                 onKeyDown={e => e.key === 'Enter' && runCommand()}
-                placeholder="Try: “Find trapped civilians” or “Start reconnaissance”"
+                placeholder="Try: “Find trapped civilians” or “Activate 16-drone grid search”"
               />
               <button
-                className={`voice-toggle ${recognitionRef.current ? 'recording' : ''}`}
-                onClick={recognitionRef.current ? stopVoice : startVoice}
-                title={recognitionRef.current ? 'Stop listening' : 'Start voice input'}
+                className={`voice-toggle ${voiceState === 'listening' ? 'recording' : ''}`}
+                onClick={voiceState === 'listening' ? stopVoice : startVoice}
+                title={voiceState === 'listening' ? 'Stop listening' : 'Start voice input'}
               >
                 {recognitionRef.current ? <MicOff /> : <Mic />}
               </button>
@@ -243,7 +285,7 @@ export function ResQNetCommandCenter() {
       </section>
 
       <section className="quick-actions">
-        <QuickAction label="Start reconnaissance" icon={<Search />} busy={busy === 'Recon deployment'} onClick={() => execute('Recon deployment', api.startRecon, r => `Recon plan created. ${r.drone_count} scout drones assigned.`)} />
+        <QuickAction label="Activate 16-drone grid search" icon={<Search />} busy={busy === 'Grid search activation'} onClick={() => execute('Grid search activation', api.startRecon, r => `Recon plan created. ${r.drone_count} scout drones assigned.`)} />
         <QuickAction label="Triage & dispatch" icon={<Siren />} busy={busy === 'Priority response'} onClick={() => execute('Priority response', api.triageDispatch, r => `${r.dispatched?.length || 0} priority missions dispatched.`)} />
         <QuickAction label="Reprioritize victims" icon={<Brain />} busy={busy === 'Victim reprioritization'} onClick={() => execute('Victim reprioritization', api.reprioritizeVictims, () => 'Victim priority matrix updated.')} />
         <QuickAction label="Replan missions" icon={<RefreshCw />} busy={busy === 'Dynamic replanning'} onClick={() => execute('Dynamic replanning', api.evaluateReplanning, r => `Replanning evaluation completed. ${Array.isArray(r) ? r.length : 0} changes evaluated.`)} />
@@ -253,13 +295,20 @@ export function ResQNetCommandCenter() {
         <article className="rqcc-panel map-panel">
           <PanelHeading title="Live city picture" subtitle="Digital twin" right={snapshot?.session_id || 'metro_session_01'} />
           <div className="tactical-map">
-            <div className="map-grid" />
+            {snapshot?.simulation_frame_base64 && (
+              <img
+                src={`data:${snapshot.simulation_frame_mime_type || 'image/jpeg'};base64,${snapshot.simulation_frame_base64}`}
+                alt="Live Godot Digital Twin"
+                className="absolute inset-0 w-full h-full object-cover opacity-75 rounded-lg"
+              />
+            )}
+            <div className="map-grid relative z-10" />
             <div className="map-north">N</div>
             {Object.values(snapshot?.buildings || {}).map((b: any) => (
               <div
                 key={b.id}
                 className={`building ${b.damage_level && b.damage_level !== 'INTACT' ? 'damaged' : ''}`}
-                style={{ left: `${mapX(b.center.x)}%`, top: `${mapY(b.center.z)}%`, width: `${Math.max(2, b.size_x / 18)}%`, height: `${Math.max(2, b.size_z / 18)}%` }}
+                style={{ left: `${mapX(b.center.x)}%`, top: `${mapY(b.center.z)}%`, width: `${Math.max(1.5, b.size_x / 7.2)}%`, height: `${Math.max(1.5, b.size_z / 7.2)}%` }}
                 title={b.name}
               />
             ))}
@@ -267,14 +316,14 @@ export function ResQNetCommandCenter() {
               <div
                 key={h.id}
                 className="hazard-zone"
-                style={{ left: `${mapX(h.center.x)}%`, top: `${mapY(h.center.z)}%`, width: `${Math.max(6, h.radius_m / 2.5)}%`, height: `${Math.max(6, h.radius_m / 2.5)}%` }}
+                style={{ left: `${mapX(h.center.x)}%`, top: `${mapY(h.center.z)}%`, width: `${Math.max(4, (h.radius_m * 2) / 7.2)}%`, height: `${Math.max(4, (h.radius_m * 2) / 7.2)}%` }}
                 title={h.type}
               />
             ))}
             {victims.map(v => (
               <div
                 key={v.id}
-                className={`map-victim ${priorityColor(v.priority_class)}`}
+                className={`map-victim ${v.status === 'EVACUATED' ? 'rescued' : priorityColor(v.priority_class)}`}
                 style={{ left: `${mapX(v.location.x)}%`, top: `${mapY(v.location.z)}%` }}
                 title={`${v.id} — ${v.priority_class}`}
               />

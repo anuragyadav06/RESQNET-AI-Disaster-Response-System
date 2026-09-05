@@ -70,6 +70,9 @@ class ConnectionManager:
         # Immediately push initial state snapshot
         try:
             snapshot = world_state.get_snapshot().model_dump(mode="json")
+            snapshot.pop("simulation_frame_base64", None)
+            snapshot.pop("simulation_frame_mime_type", None)
+            snapshot.pop("simulation_frame_timestamp", None)
             await websocket.send_text(json.dumps({
                 "type": "STATE_UPDATE",
                 "snapshot": snapshot,
@@ -178,6 +181,9 @@ class ConnectionManager:
                 await asyncio.sleep(interval_s)
                 if self.frontend_clients:
                     snapshot = world_state.get_snapshot().model_dump(mode="json")
+                    snapshot.pop("simulation_frame_base64", None)
+                    snapshot.pop("simulation_frame_mime_type", None)
+                    snapshot.pop("simulation_frame_timestamp", None)
                     await self.broadcast_to_frontend({
                         "type": "STATE_UPDATE",
                         "snapshot": snapshot,

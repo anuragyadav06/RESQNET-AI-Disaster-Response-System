@@ -1,13 +1,14 @@
 import React, { useState, useEffect } from 'react';
-import { MissionPlan } from '../types';
+import { MissionPlan, WorldStateSnapshot } from '../types';
 import { api } from '../services/api';
 import { Navigation, AlertTriangle, ShieldCheck, XOctagon, Clock, Battery, Send } from 'lucide-react';
 
 interface MissionControlViewProps {
   onRefresh: () => void;
+  snapshot: WorldStateSnapshot | null;
 }
 
-export const MissionControlView: React.FC<MissionControlViewProps> = ({ onRefresh }) => {
+export const MissionControlView: React.FC<MissionControlViewProps> = ({ onRefresh, snapshot }) => {
   const [missions, setMissions] = useState<MissionPlan[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
   const [msg, setMsg] = useState<string>('');
@@ -25,8 +26,11 @@ export const MissionControlView: React.FC<MissionControlViewProps> = ({ onRefres
   };
 
   useEffect(() => {
-    fetchMissions();
-  }, []);
+    if (snapshot) {
+      setMissions(Object.values(snapshot.missions || {}));
+      setLoading(false);
+    } else fetchMissions();
+  }, [snapshot]);
 
   const handleAbort = async (mId: string) => {
     if (!confirm(`Are you sure you want to abort mission ${mId}?`)) return;

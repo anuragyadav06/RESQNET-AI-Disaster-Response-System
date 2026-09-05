@@ -1,27 +1,42 @@
 from __future__ import annotations
-from typing import Dict, List
+from typing import Dict
 from app.state.world_state import world_state
-from app.schemas.drone import DroneCapability, DroneStatus
-from app.intelligence.routing.rrt_star import rrt_star
-from .coverage_planner import coverage_planner
+from app.schemas.drone import DroneCapability
+
 
 class SearchPlanner:
-    def _obstacles(self):
-        return [(b.center.x, b.center.z, max(b.size_x,b.size_z)*0.55) for b in world_state.buildings.values() if b.damage_level.value != "COLLAPSED"]
+    """Authoritative 4x4 scout allocation matching the Godot Digital Twin exactly."""
 
     def build_plan(self) -> Dict[str, object]:
-        scouts = [d for d in world_state.drones.values() if DroneCapability.SCOUT in d.capabilities and d.status == DroneStatus.IDLE and d.battery_percent >= 35]
-        ids = [d.id for d in scouts]
-        raw = coverage_planner.partition(-180, 180, -180, 180, ids)
-        assignments={}
-        obstacles=self._obstacles()
-        for d in scouts:
-            cursor=(d.position.x,d.position.z); routed=[]
-            for pt in raw.get(d.id,[])[:28]:
-                path=rrt_star.plan(cursor,(pt["x"],pt["z"]),obstacles)
-                routed.extend([{"x":x,"y":pt["y"],"z":z} for x,z in path[1:]])
-                cursor=(pt["x"],pt["z"])
-            assignments[d.id]=routed
-        return {"planner":"MULTI_UAV_COVERAGE","coverage_assignments":assignments,"drone_count":len(ids),"overlap_policy":"MINIMIZE_DUPLICATE_COVERAGE","motion_planner":"RRT_STAR","obstacle_model":"BUILDINGS_AND_ACTIVE_HAZARDS"}
+        scouts = sorted(
+            [d for d in world_state.drones.values() if DroneCapability.SCOUT in d.capabilities],
+            key=lambda d: d.id,
+        )
+        assignments = {}
+        for index, drone in enumerate(scouts[:16], start=1):
+            row = (index - 1) // 4
+            col = (index - 1) % 4
+            min_x = -360.0 + col * 180.0 + 8.0
+            max_x = -360.0 + (col + 1) * 180.0 - 8.0
+            min_z = -360.0 + row * 180.0 + 8.0
+            max_z = -360.0 + (row + 1) * 180.0 - 8.0
+            assignments[drone.id] = {
+                "grid_id": f"G{index:02d}",
+                "bounds": {"min_x": min_x, "max_x": max_x, "min_z": min_z, "max_z": max_z},
+                "direction": "NORTH_SOUTH_ONLY",
+                "waypoints": [
+                    {"x": drone.position.x, "y": 150.0, "z": max_z},
+                    {"x": drone.position.x, "y": 150.0, "z": min_z},
+                ],
+            }
+        return {
+            "planner": "AUTHORITATIVE_4X4_GRID",
+            "motion_planner": "FIXED_NORTH_SOUTH_SWEEP",
+            "drone_count": min(16, len(scouts)),
+            "grid": {"rows": 4, "cols": 4, "cell_size_m": 180.0, "map_min": -360.0, "map_max": 360.0},
+            "coverage_assignments": assignments,
+            "overlap_policy": "ONE_SCOUT_PER_CELL",
+        }
 
-search_planner=SearchPlanner()
+
+search_planner = SearchPlanner()

@@ -172,6 +172,15 @@ export function App() {
         </aside>
 
         <main className="app-main">
+          {snapshot?.simulation_frame_base64 && (
+            <div className="mb-3 bg-[#07111d] border border-cyan-900/50 rounded-xl overflow-hidden shadow-lg">
+              <div className="px-3 py-1.5 flex items-center justify-between text-[10px] font-mono">
+                <span className="text-cyan-300">LIVE DIGITAL TWIN / SYSTEM B VIEW</span>
+                <span className="text-slate-500">Authoritative simulation · T+{snapshot.simulation_time.toFixed(1)}s</span>
+              </div>
+              <img className="w-full max-h-52 object-cover" src={`data:${snapshot.simulation_frame_mime_type || 'image/jpeg'};base64,${snapshot.simulation_frame_base64}`} alt="Live Godot Digital Twin" />
+            </div>
+          )}
           <div className="mobile-nav">
             <button className={currentTab === 'command' ? 'active' : ''} onClick={() => setCurrentTab('command')}><LayoutDashboard />Command</button>
             <button className={currentTab === 'incidents' ? 'active' : ''} onClick={() => setCurrentTab('incidents')}><Shield />Incidents</button>
@@ -179,14 +188,14 @@ export function App() {
             <button className={currentTab === 'missions' ? 'active' : ''} onClick={() => setCurrentTab('missions')}><Radio />Missions</button>
           </div>
 
-          {currentTab === 'command' && <ResQNetCommandCenter />}
+          {currentTab === 'command' && <ResQNetCommandCenter snapshot={snapshot} isConnected={isConnected} latencyMs={latencyMs} refresh={refresh} />}
           {currentTab === 'operations' && (
             <OperationsDashboard snapshot={snapshot} isConnected={isConnected} latencyMs={latencyMs} onRefresh={refresh} />
           )}
-          {currentTab === 'incidents' && <IncidentManagement onRefresh={refresh} />}
-          {currentTab === 'victims' && <VictimIntelligence onRefresh={refresh} />}
-          {currentTab === 'drones' && <DroneFleetView onRefresh={refresh} />}
-          {currentTab === 'missions' && <MissionControlView onRefresh={refresh} />}
+          {currentTab === 'incidents' && <IncidentManagement onRefresh={refresh} snapshot={snapshot} />}
+          {currentTab === 'victims' && <VictimIntelligence onRefresh={refresh} snapshot={snapshot} />}
+          {currentTab === 'drones' && <DroneFleetView onRefresh={refresh} snapshot={snapshot} />}
+          {currentTab === 'missions' && <MissionControlView onRefresh={refresh} snapshot={snapshot} />}
           {currentTab === 'routes' && <RoutePlanningView snapshot={snapshot} onRefresh={refresh} />}
           {currentTab === 'hazards' && <HazardMonitorView snapshot={snapshot} />}
           {currentTab === 'telemetry' && <TelemetryView snapshot={snapshot} latencyMs={latencyMs} />}

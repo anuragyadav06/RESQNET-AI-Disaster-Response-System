@@ -43,7 +43,7 @@ class IncidentAgent:
                 return None
             
             # Create new victim
-            vic_id = f"VIC-{len(world_state.victims) + 101}"
+            vic_id = str(obs.raw_reading.get("victim_id") or f"VIC-{len(world_state.victims) + 101}")
             med_sev = obs.raw_reading.get("medical_severity", 0.7)
             urgency = obs.raw_reading.get("urgency", 0.75)
             people = obs.raw_reading.get("people_count", 1)
@@ -74,6 +74,7 @@ class IncidentAgent:
                 hazard_exposure=float(obs.raw_reading.get("hazard_exposure", 0.0)),
                 confidence=obs.confidence,
                 detected_at=now,
+                last_updated_at=now,
                 notes=[f"Detected by {obs.source_drone_id}", f"Hazard: {hazard_type.value}"],
             )
             await prioritization_agent.prioritize_and_update(new_vic)

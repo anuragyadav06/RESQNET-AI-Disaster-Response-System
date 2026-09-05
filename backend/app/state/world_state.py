@@ -44,6 +44,9 @@ class WorldStateManager:
         self.road_edges: Dict[str, RoadEdge] = {}
         self.facilities: Dict[str, Facility] = {}
         self.environment: EnvironmentalConditions = EnvironmentalConditions()
+        self.simulation_frame_base64: Optional[str] = None
+        self.simulation_frame_mime_type: Optional[str] = None
+        self.simulation_frame_timestamp: Optional[float] = None
         
         self.telemetry_packet_count: int = 0
         self.telemetry_start_time: float = time.time()
@@ -133,59 +136,47 @@ class WorldStateManager:
                 occupancy_estimate=60,
             )
 
-        # 4. Initial Drone Fleet (Ready at Base Alpha)
-        self.drones["DRONE-S01"] = DroneEntity(
-            id="DRONE-S01",
-            callsign="Scout One (Fast Recon)",
-            model_name="SkyRanger R70",
-            capabilities=[DroneCapability.SCOUT, DroneCapability.INSPECTION],
-            position=Vector3D(x=-10.0, y=0.0, z=-5.0),
-            battery_percent=98.5,
-            max_payload_kg=2.0,
-            status=DroneStatus.IDLE,
-            home_facility_id="BASE-ALPHA",
-            last_telemetry_timestamp=time.time(),
-        )
-        self.drones["DRONE-M01"] = DroneEntity(
-            id="DRONE-M01",
-            callsign="MedEvac MedKit Carrier",
-            model_name="Matrice 350 RTK - MedDrop",
-            capabilities=[DroneCapability.MEDICAL, DroneCapability.SCOUT],
-            position=Vector3D(x=0.0, y=0.0, z=-5.0),
-            battery_percent=95.0,
-            max_payload_kg=7.0,
-            current_payload_kg=3.5,
-            payload_type="EMERGENCY_TRAUMA_KIT",
-            status=DroneStatus.IDLE,
-            home_facility_id="BASE-ALPHA",
-            last_telemetry_timestamp=time.time(),
-        )
-        self.drones["DRONE-H01"] = DroneEntity(
-            id="DRONE-H01",
-            callsign="Titan Heavy Lifter",
-            model_name="Freefly Alta X",
-            capabilities=[DroneCapability.HEAVY_LIFT, DroneCapability.RELAY],
-            position=Vector3D(x=10.0, y=0.0, z=-5.0),
-            battery_percent=92.0,
-            max_payload_kg=15.0,
-            current_payload_kg=0.0,
-            payload_type="EXTRICATION_EQUIPMENT",
-            status=DroneStatus.IDLE,
-            home_facility_id="BASE-ALPHA",
-            last_telemetry_timestamp=time.time(),
-        )
-        self.drones["DRONE-S02"] = DroneEntity(
-            id="DRONE-S02",
-            callsign="Inspector Secondary",
-            model_name="Autel EVO II Dual 640T",
-            capabilities=[DroneCapability.SCOUT, DroneCapability.INSPECTION],
-            position=Vector3D(x=20.0, y=0.0, z=-5.0),
-            battery_percent=100.0,
-            max_payload_kg=1.5,
-            status=DroneStatus.IDLE,
-            home_facility_id="BASE-ALPHA",
-            last_telemetry_timestamp=time.time(),
-        )
+        # 4. Authoritative fleet roster: 16 scouts + 5 medical + 5 heavy-lift + 5 rescue.
+        # System B telemetry will replace positions/statuses with physical truth.
+        scout_id = 1
+        for row in range(4):
+            for col in range(4):
+                x = -270.0 + col * 180.0
+                z = -270.0 + row * 180.0
+                self.drones[f"DRONE-S{scout_id:02d}"] = DroneEntity(
+                    id=f"DRONE-S{scout_id:02d}",
+                    callsign=f"Scout Grid G{scout_id:02d}",
+                    model_name="SkyRanger Grid Scout",
+                    capabilities=[DroneCapability.SCOUT, DroneCapability.INSPECTION],
+                    position=Vector3D(x=x, y=150.0, z=z),
+                    battery_percent=100.0,
+                    max_payload_kg=2.0,
+                    status=DroneStatus.IDLE,
+                    home_facility_id="BASE-ALPHA",
+                    last_telemetry_timestamp=time.time(),
+                )
+                scout_id += 1
+        for i in range(1, 6):
+            self.drones[f"DRONE-M{i:02d}"] = DroneEntity(
+                id=f"DRONE-M{i:02d}", callsign=f"Medical Response {i}", model_name="Matrice 350 RTK MedDrop",
+                capabilities=[DroneCapability.MEDICAL], position=Vector3D(x=-48.0+(i-1)*24.0, y=105.0, z=-28.0),
+                battery_percent=100.0, max_payload_kg=7.0, current_payload_kg=3.5, payload_type="EMERGENCY_TRAUMA_KIT",
+                status=DroneStatus.IDLE, home_facility_id="BASE-ALPHA", last_telemetry_timestamp=time.time(),
+            )
+        for i in range(1, 6):
+            self.drones[f"DRONE-H{i:02d}"] = DroneEntity(
+                id=f"DRONE-H{i:02d}", callsign=f"Heavy Lift {i}", model_name="Freefly Alta X",
+                capabilities=[DroneCapability.HEAVY_LIFT], position=Vector3D(x=-48.0+(i-1)*24.0, y=105.0, z=0.0),
+                battery_percent=100.0, max_payload_kg=15.0, current_payload_kg=0.0, payload_type="EXTRICATION_EQUIPMENT",
+                status=DroneStatus.IDLE, home_facility_id="BASE-ALPHA", last_telemetry_timestamp=time.time(),
+            )
+        for i in range(1, 6):
+            self.drones[f"DRONE-R{i:02d}"] = DroneEntity(
+                id=f"DRONE-R{i:02d}", callsign=f"Rescue Extraction {i}", model_name="ResQNet Rescue VTOL",
+                capabilities=[DroneCapability.RESCUE], position=Vector3D(x=-48.0+(i-1)*24.0, y=105.0, z=28.0),
+                battery_percent=100.0, max_payload_kg=8.0, current_payload_kg=0.0, payload_type="RESCUE_HARNESS",
+                status=DroneStatus.IDLE, home_facility_id="BASE-ALPHA", last_telemetry_timestamp=time.time(),
+            )
 
     def increment_version(self):
         self.state_version += 1
@@ -289,7 +280,11 @@ class WorldStateManager:
             road_nodes=self.road_nodes,
             road_edges=self.road_edges,
             facilities=self.facilities,
+            missions=self.missions,
             environment=self.environment,
+            simulation_frame_base64=self.simulation_frame_base64,
+            simulation_frame_mime_type=self.simulation_frame_mime_type,
+            simulation_frame_timestamp=self.simulation_frame_timestamp,
             telemetry_rate_hz=hz if self.system_b_connected else 0.0,
             command_latency_ms=self.command_latency_ms,
             stale_entities_count=stale_count,

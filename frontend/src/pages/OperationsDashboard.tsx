@@ -18,6 +18,8 @@ import {
   Sliders,
   CheckCircle2,
   XCircle,
+  Truck,
+  Wrench,
 } from 'lucide-react';
 
 interface OperationsDashboardProps {
@@ -130,14 +132,14 @@ export const OperationsDashboard: React.FC<OperationsDashboardProps> = ({
     }
   };
 
-  const handleDispatchToVictim = async (victimId: string) => {
-    setActionLoading('dispatch');
+  const handleDispatchToVictim = async (victimId: string, objective: 'RESCUE_EXTRACTION'|'MEDICAL_SUPPLY_DROP'|'HEAVY_EXTRICATION') => {
+    setActionLoading(`${victimId}:${objective}`);
     try {
-      const res = await api.dispatchDrone('AUTO', victimId);
-      showFeedback(`Rescue mission created: ${res.mission?.mission_id}`);
+      const res = await api.dispatchDrone('AUTO', victimId, objective);
+      showFeedback(res.message || `${objective} dispatched for ${victimId}`);
       onRefresh();
     } catch (e: any) {
-      showFeedback(e.message, true);
+      showFeedback(e?.message || 'Dispatch rejected by System A.', true);
     } finally {
       setActionLoading('');
     }
@@ -151,6 +153,9 @@ export const OperationsDashboard: React.FC<OperationsDashboardProps> = ({
   const idleDronesCount = snapshot
     ? Object.values(snapshot.drones).filter((d) => d.status === 'IDLE').length
     : 0;
+  const availableMedical = snapshot ? Object.values(snapshot.drones).filter(d => d.status === 'IDLE' && d.capabilities.includes('MEDICAL')).length : 0;
+  const availableRescue = snapshot ? Object.values(snapshot.drones).filter(d => d.status === 'IDLE' && d.capabilities.includes('RESCUE')).length : 0;
+  const availableHeavy = snapshot ? Object.values(snapshot.drones).filter(d => d.status === 'IDLE' && d.capabilities.includes('HEAVY_LIFT')).length : 0;
 
   return (
     <div className="space-y-4">
@@ -392,13 +397,12 @@ export const OperationsDashboard: React.FC<OperationsDashboardProps> = ({
                         ))}
                       </div>
                     )}
-                    {selectedEntity.status !== 'ASSISTED' && !selectedEntity.assigned_drone_id && (
-                      <button
-                        onClick={() => handleDispatchToVictim(selectedEntity.id)}
-                        className="w-full mt-2 py-1.5 bg-red-600 hover:bg-red-500 text-white font-mono font-bold rounded shadow transition"
-                      >
-                        Dispatch Rescue Drone
-                      </button>
+                    {selectedEntity.status !== 'EVACUATED' && (
+                      <div className="grid grid-cols-1 gap-2 mt-2">
+                        <button onClick={() => handleDispatchToVictim(selectedEntity.id, 'MEDICAL_SUPPLY_DROP')} disabled={!!actionLoading || availableMedical === 0} className="w-full py-1.5 bg-emerald-700 hover:bg-emerald-600 disabled:opacity-40 text-white font-mono font-bold rounded shadow transition flex items-center justify-center gap-1.5"><HeartPulse className="w-3.5 h-3.5"/> Dispatch Medical {availableMedical === 0 ? '(NONE READY)' : `(${availableMedical})`}</button>
+                        <button onClick={() => handleDispatchToVictim(selectedEntity.id, 'RESCUE_EXTRACTION')} disabled={!!actionLoading || availableRescue === 0} className="w-full py-1.5 bg-red-600 hover:bg-red-500 disabled:opacity-40 text-white font-mono font-bold rounded shadow transition flex items-center justify-center gap-1.5"><Send className="w-3.5 h-3.5"/> Dispatch Rescue {availableRescue === 0 ? '(NONE READY)' : `(${availableRescue})`}</button>
+                        <button onClick={() => handleDispatchToVictim(selectedEntity.id, 'HEAVY_EXTRICATION')} disabled={!!actionLoading || availableHeavy === 0} className="w-full py-1.5 bg-amber-700 hover:bg-amber-600 disabled:opacity-40 text-white font-mono font-bold rounded shadow transition flex items-center justify-center gap-1.5"><Wrench className="w-3.5 h-3.5"/> Dispatch Heavy Lift {availableHeavy === 0 ? '(NONE READY)' : `(${availableHeavy})`}</button>
+                      </div>
                     )}
                   </div>
                 )}

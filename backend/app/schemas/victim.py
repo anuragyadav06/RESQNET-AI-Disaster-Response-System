@@ -15,10 +15,12 @@ class VictimPriorityClass(str, Enum):
 
 class VictimStatus(str, Enum):
     DETECTED = "DETECTED"
+    TRAPPED = "TRAPPED"
     TRIAGED = "TRIAGED"
     EN_ROUTE = "EN_ROUTE"
     ASSISTED = "ASSISTED"
     EVACUATED = "EVACUATED"
+    RESCUED = "RESCUED"
 
 
 class VictimHazardType(str, Enum):
