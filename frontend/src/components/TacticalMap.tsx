@@ -75,26 +75,118 @@ export const TacticalMap: React.FC<TacticalMapProps> = ({
     [snapshot],
   );
 
+  // Terminal victims are kept visible only while the drone that handled
+  // them is physically close to the victim. DroneFleet keeps
+  // target_victim_id during the RETURNING phase, so this remains tied to
+  // the actual response lifecycle rather than a frontend timer/cache.
+  const terminalStatuses = useMemo(
+    () => new Set([
+      'RESCUED',
+      'ASSISTED',
+      'EVACUATED',
+      'TREATED',
+      'STABILIZED',
+      'MEDICALLY_STABILIZED',
+      'RESOLVED',
+      'SAFE',
+    ]),
+    [],
+  );
+
+  const allVictims = useMemo(
+    () => (snapshot ? Object.values(snapshot.victims || {}) : []),
+    [snapshot],
+  );
+
   const victims = useMemo(
     () => {
       if (!snapshot) return [];
-      return Object.values(snapshot.victims || {}).filter((victim: any) => {
+
+      const currentDrones = Object.values(snapshot.drones || {}) as any[];
+
+      return allVictims.filter((victim: any) => {
         const status = String(victim.status || '').toUpperCase();
-        // Operational radar shows only unresolved / actionable victims.
-        // Terminal records remain in snapshot and Victim Intelligence.
-        return ![
-          'RESCUED',
-          'ASSISTED',
-          'EVACUATED',
-          'TREATED',
-          'STABILIZED',
-          'MEDICALLY_STABILIZED',
-          'RESOLVED',
-          'SAFE',
-        ].includes(status);
+
+        // Unresolved victims remain operationally visible.
+        if (!terminalStatuses.has(status)) {
+          return true;
+        }
+
+        /*
+         * TERMINAL VICTIM LIFECYCLE
+         *
+         * Dispatch:
+         *   active victim -> visible
+         *
+         * Arrival / task:
+         *   terminal victim + handling drone nearby -> visible
+         *
+         * Departure:
+         *   handling drone > 30m away -> disappear
+         *
+         * No matching handling drone:
+         *   terminal record is history, so do not render it.
+         *
+         * This intentionally does NOT use a React ref or timeout.
+         * The decision is recalculated directly from every authoritative
+         * snapshot, so the map cannot get stuck displaying old victims.
+         */
+        const victimId = String(victim.id || '').trim();
+
+        if (!victimId) {
+          return false;
+        }
+
+        const assignedDroneId = String(
+          victim.assigned_drone_id ||
+          victim.response_drone_id ||
+          ''
+        ).trim();
+
+        const handlingDrone = currentDrones.find((drone: any) => {
+          const droneId = String(drone.id || '').trim();
+          const targetVictimId = String(
+            drone.target_victim_id ||
+            drone.target ||
+            ''
+          ).trim();
+
+          return (
+            (assignedDroneId && droneId === assignedDroneId) ||
+            targetVictimId === victimId
+          );
+        });
+
+        // Terminal victim without an active/returning handling drone is
+        // already historical and must not appear on the operational radar.
+        if (!handlingDrone) {
+          return false;
+        }
+
+        const victimX = Number(victim.location?.x);
+        const victimZ = Number(victim.location?.z);
+        const droneX = Number(handlingDrone.position?.x);
+        const droneZ = Number(handlingDrone.position?.z);
+
+        if (
+          !Number.isFinite(victimX) ||
+          !Number.isFinite(victimZ) ||
+          !Number.isFinite(droneX) ||
+          !Number.isFinite(droneZ)
+        ) {
+          return false;
+        }
+
+        const dx = droneX - victimX;
+        const dz = droneZ - victimZ;
+        const distance = Math.sqrt(dx * dx + dz * dz);
+
+        // Keep the completed victim visible only while the handling drone
+        // is still at the response location / immediate departure area.
+        return distance <= 30.0;
       });
     },
-    [snapshot],
+    [snapshot, allVictims, terminalStatuses],
   );
 
   const activeVictimCount = victims.length;
@@ -115,54 +207,101 @@ export const TacticalMap: React.FC<TacticalMapProps> = ({
   }, [snapshot]);
 
   const droneRole = (drone: any): string => {
-    // The backend DroneEntity schema exposes capabilities rather than a
-    // dedicated drone_type field. Resolve the visual role from every reliable
-    // identifier so the radar never paints response drones as scouts.
+    /*
+     * Fleet IDs are authoritative for the visual role:
+     *   DRONE-Sxx = SCOUT
+     *   DRONE-Mxx = MEDICAL
+     *   DRONE-Hxx = HEAVY LIFT
+     *   DRONE-Rxx = RESCUE
+     *
+     * This is intentionally checked BEFORE capabilities because the radar
+     * must never paint a scout red merely because a backend capability list
+     * is broader or inconsistent.
+     */
     const rawType = String(
       drone.drone_type || drone.type || drone.role || drone.drone_role || ''
     ).toUpperCase().replace(/[-_]/g, ' ');
 
     const capabilities = Array.isArray(drone.capabilities)
-      ? drone.capabilities.map((value: unknown) => String(value).toUpperCase().replace(/[-_]/g, ' '))
+      ? drone.capabilities.map((value: unknown) =>
+          String(value).toUpperCase().replace(/[-_]/g, ' ')
+        )
       : [];
 
     const callsign = String(drone.callsign || '').toUpperCase();
     const droneId = String(drone.id || '').toUpperCase();
     const modelName = String(drone.model_name || '').toUpperCase();
 
-    // Resolve role deterministically. Fleet prefixes are authoritative here:
-    // S = SCOUT, M = MEDICAL, H = HEAVY LIFT, R = RESCUE.
-    // This prevents a scout from being misclassified as RESCUE by a loose
-    // substring check such as `includes("R ")`.
+    // Exact fleet-prefix authority.
+    if (/^DRONE[-_ ]?S\d+$/.test(droneId) || /^S\d+$/.test(callsign)) {
+      return 'SCOUT';
+    }
+
+    if (/^DRONE[-_ ]?M\d+$/.test(droneId) || /^M\d+$/.test(callsign)) {
+      return 'MEDICAL';
+    }
+
+    if (/^DRONE[-_ ]?H\d+$/.test(droneId) || /^H\d+$/.test(callsign)) {
+      return 'HEAVY LIFT';
+    }
+
+    if (/^DRONE[-_ ]?R\d+$/.test(droneId) || /^R\d+$/.test(callsign)) {
+      return 'RESCUE';
+    }
+
+    // Fallback metadata/capability resolution for non-standard IDs.
     const hasCapability = (name: string) =>
-      capabilities.some((cap: string) => cap === name || cap.includes(name));
+      capabilities.some(
+        (cap: string) => cap === name || cap.includes(name)
+      );
 
     if (
-      hasCapability('HEAVY LIFT') || hasCapability('HEAVYLIFT') ||
-      rawType.includes('HEAVY LIFT') || rawType.includes('HEAVYLIFT') ||
-      callsign.includes('HEAVY') || droneId.includes('HEAVY') || modelName.includes('HEAVY') ||
-      /^DRONE[-_ ]?H(?:\\d|[-_ ])/.test(droneId) || /^H(?:\\d|[-_ ])/.test(callsign)
-    ) return 'HEAVY LIFT';
+      hasCapability('HEAVY LIFT') ||
+      hasCapability('HEAVYLIFT') ||
+      rawType.includes('HEAVY LIFT') ||
+      rawType.includes('HEAVYLIFT') ||
+      callsign.includes('HEAVY') ||
+      droneId.includes('HEAVY') ||
+      modelName.includes('HEAVY')
+    ) {
+      return 'HEAVY LIFT';
+    }
 
     if (
-      hasCapability('MEDICAL') || rawType.includes('MEDICAL') ||
-      callsign.includes('MEDICAL') || droneId.includes('MEDICAL') || modelName.includes('MEDICAL') ||
-      /^DRONE[-_ ]?M(?:\\d|[-_ ])/.test(droneId) || /^M(?:\\d|[-_ ])/.test(callsign)
-    ) return 'MEDICAL';
+      hasCapability('MEDICAL') ||
+      rawType.includes('MEDICAL') ||
+      callsign.includes('MEDICAL') ||
+      droneId.includes('MEDICAL') ||
+      modelName.includes('MEDICAL')
+    ) {
+      return 'MEDICAL';
+    }
 
     if (
-      hasCapability('RESCUE') || rawType.includes('RESCUE') ||
-      callsign.includes('RESCUE') || droneId.includes('RESCUE') || modelName.includes('RESCUE') ||
-      /^DRONE[-_ ]?R(?:\\d|[-_ ])/.test(droneId) || /^R(?:\\d|[-_ ])/.test(callsign)
-    ) return 'RESCUE';
+      hasCapability('RESCUE') ||
+      rawType.includes('RESCUE') ||
+      callsign.includes('RESCUE') ||
+      droneId.includes('RESCUE') ||
+      modelName.includes('RESCUE')
+    ) {
+      return 'RESCUE';
+    }
 
     if (
-      hasCapability('SCOUT') || rawType.includes('SCOUT') ||
-      callsign.includes('SCOUT') || droneId.includes('SCOUT') || modelName.includes('SCOUT') ||
-      /^DRONE[-_ ]?S(?:\\d|[-_ ])/.test(droneId) || /^S(?:\\d|[-_ ])/.test(callsign)
-    ) return 'SCOUT';
+      hasCapability('SCOUT') ||
+      rawType.includes('SCOUT') ||
+      callsign.includes('SCOUT') ||
+      droneId.includes('SCOUT') ||
+      modelName.includes('SCOUT')
+    ) {
+      return 'SCOUT';
+    }
 
-    if (hasCapability('INSPECTION') || rawType.includes('INSPECTION') || rawType.includes('INSPECT')) {
+    if (
+      hasCapability('INSPECTION') ||
+      rawType.includes('INSPECTION') ||
+      rawType.includes('INSPECT')
+    ) {
       return 'INSPECTION';
     }
 
@@ -172,11 +311,18 @@ export const TacticalMap: React.FC<TacticalMapProps> = ({
 
   const roleColor = (role: string): string => {
     switch (role) {
-      case 'MEDICAL': return '#22c55e';
-      case 'HEAVY LIFT': return '#f59e0b';
-      case 'RESCUE': return '#ef4444';
-      case 'INSPECTION': return '#a78bfa';
-      default: return '#22d3ee';
+      case 'SCOUT':
+        return '#22d3ee'; // CYAN
+      case 'MEDICAL':
+        return '#22c55e';
+      case 'HEAVY LIFT':
+        return '#f59e0b';
+      case 'RESCUE':
+        return '#ef4444';
+      case 'INSPECTION':
+        return '#18a7c4';
+      default:
+        return '#22d3ee';
     }
   };
 
@@ -434,7 +580,7 @@ export const TacticalMap: React.FC<TacticalMapProps> = ({
               );
             })}
 
-          {/* Active victims only. Completed victims deliberately do not render. */}
+          {/* Operational victims + terminal victims only while their handling drone is nearby. */}
           {showVictims && snapshot &&
             victims.map((vic: any) => {
               const vx = toSvgX(vic.location.x);

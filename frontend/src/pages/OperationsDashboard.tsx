@@ -129,7 +129,10 @@ export const OperationsDashboard: React.FC<OperationsDashboardProps> = ({
     }
   };
 
-  const handleDispatchToVictim = async (victimId: string, objective: 'RESCUE_EXTRACTION'|'MEDICAL_SUPPLY_DROP'|'HEAVY_EXTRICATION') => {
+  const handleDispatchToVictim = async (
+    victimId: string,
+    objective: 'RESCUE_EXTRACTION' | 'MEDICAL_SUPPLY_DROP' | 'HEAVY_EXTRICATION'
+  ) => {
     setActionLoading(`${victimId}:${objective}`);
     try {
       const res = await api.dispatchDrone('AUTO', victimId, objective);
@@ -167,10 +170,6 @@ export const OperationsDashboard: React.FC<OperationsDashboardProps> = ({
     <div className="space-y-4">
       {/* 1. Live Operation Status Banner */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-        
-
-        
-
         {/* Critical Victims */}
         <div className="bg-[#0b121e] border border-cyan-900/40 p-3 rounded-lg flex items-center gap-3">
           <div className={`p-2 rounded-lg ${criticalCount > 0 ? 'bg-red-950 text-red-400' : 'bg-slate-800 text-slate-400'}`}>
@@ -208,8 +207,6 @@ export const OperationsDashboard: React.FC<OperationsDashboardProps> = ({
             <div className="text-[10px] text-slate-500 font-mono">{snapshot ? Object.keys(snapshot.hazards).length : 0} hazard zones</div>
           </div>
         </div>
-
-        
       </div>
 
       {/* 2. Operational Action Toolbar */}
@@ -369,14 +366,33 @@ export const OperationsDashboard: React.FC<OperationsDashboardProps> = ({
                         <span className="text-slate-400"> observed state, hazard exposure, medical severity, survival urgency and accessibility.</span>
                       </div>
                     </div>
+
+                    {/* Compact explainability: keep the most operationally useful reasons visible. */}
                     {selectedEntity.breakdown?.reasons && (
-                      <div className="text-[10px] text-slate-400 space-y-1">
-                        <div className="font-bold text-slate-300">Explainable Reasons:</div>
-                        {selectedEntity.breakdown.reasons.map((r: string, idx: number) => (
-                          <div key={idx} className="text-slate-400 font-mono">• {r}</div>
-                        ))}
+                      <div className="text-[10px] text-slate-400">
+                        <div className="font-bold text-slate-300 mb-1">Explainable Reasons</div>
+                        <div className="flex flex-wrap gap-x-2 gap-y-0.5">
+                          {selectedEntity.breakdown.reasons
+                            .filter((r: string) => {
+                              const text = String(r).toLowerCase();
+                              return (
+                                !text.includes('bounded') &&
+                                !text.includes('assessment confidence') &&
+                                !text.includes('operational confidence') &&
+                                !text.includes('priority score combines') &&
+                                !text.includes('confidence uses')
+                              );
+                            })
+                            .slice(0, 3)
+                            .map((r: string, idx: number) => (
+                              <span key={idx} className="font-mono text-slate-400">
+                                • {r}
+                              </span>
+                            ))}
+                        </div>
                       </div>
                     )}
+
                     {selectedEntity.status !== 'EVACUATED' && (
                       <div className="grid grid-cols-1 gap-2 mt-2">
                         <button onClick={() => handleDispatchToVictim(selectedEntity.id, 'MEDICAL_SUPPLY_DROP')} disabled={!!actionLoading || availableMedical === 0} className="w-full py-1.5 bg-emerald-700 hover:bg-emerald-600 disabled:opacity-40 text-white font-mono font-bold rounded shadow transition flex items-center justify-center gap-1.5"><HeartPulse className="w-3.5 h-3.5"/> Dispatch Medical {availableMedical === 0 ? '(NONE READY)' : `(${availableMedical})`}</button>

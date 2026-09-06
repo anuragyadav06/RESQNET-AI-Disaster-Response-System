@@ -40,7 +40,7 @@ export function ResQNetCommandCenter({ snapshot, isConnected, refresh }: { snaps
   const [command, setCommand] = useState('');
   const [transcript, setTranscript] = useState('');
   const [response, setResponse] = useState('System ready. Awaiting operator command.');
-  const [voiceState, setVoiceState] = useState<'idle'|'listening'|'error'>('idle');
+  const [voiceState, setVoiceState] = useState<'idle' | 'listening' | 'error'>('idle');
   const recognitionRef = useRef<any>(null);
 
   const loadEvents = useCallback(async () => {
@@ -391,143 +391,193 @@ export function ResQNetCommandCenter({ snapshot, isConnected, refresh }: { snaps
         <QuickAction label="Replan missions" icon={<RefreshCw />} busy={busy === 'Dynamic replanning'} onClick={() => execute('Dynamic replanning', api.evaluateReplanning, r => `Replanning evaluation completed. ${Array.isArray(r) ? r.length : 0} changes evaluated.`)} />
       </section>
 
-      <section className="command-grid">
-        <article className="rqcc-panel map-panel">
-          <PanelHeading title="Live city picture" subtitle="Digital twin" right={snapshot?.session_id || 'metro_session_01'} />
-          <div className="tactical-map">
-            {snapshot?.simulation_frame_base64 && (
-              <img
-                src={`data:${snapshot.simulation_frame_mime_type || 'image/jpeg'};base64,${snapshot.simulation_frame_base64}`}
-                alt="Live Godot Digital Twin"
-                className="absolute inset-0 w-full h-full object-cover opacity-75 rounded-lg"
-              />
-            )}
-            <div className="map-grid relative z-10" />
-            <div className="map-north">N</div>
-            {Object.values(snapshot?.buildings || {}).map((b: any) => (
-              <div
-                key={b.id}
-                className={`building ${b.damage_level && b.damage_level !== 'INTACT' ? 'damaged' : ''}`}
-                style={{ left: `${mapX(b.center.x)}%`, top: `${mapY(b.center.z)}%`, width: `${Math.max(1.5, b.size_x / 7.2)}%`, height: `${Math.max(1.5, b.size_z / 7.2)}%` }}
-                title={b.name}
-              />
-            ))}
-            {Object.values(snapshot?.hazards || {}).map((h: any) => h.active && (
-              <div
-                key={h.id}
-                className="hazard-zone"
-                style={{ left: `${mapX(h.center.x)}%`, top: `${mapY(h.center.z)}%`, width: `${Math.max(4, (h.radius_m * 2) / 7.2)}%`, height: `${Math.max(4, (h.radius_m * 2) / 7.2)}%` }}
-                title={h.type}
-              />
-            ))}
-            {victims.map(v => (
-              <div
-                key={v.id}
-                className={`map-victim ${priorityColor(v.priority_class)}`}
-                style={{ left: `${mapX(v.location.x)}%`, top: `${mapY(v.location.z)}%` }}
-                title={`${v.id} — ${v.priority_class}`}
-              />
-            ))}
-            {drones.map(d => (
-              <div
-                key={d.id}
-                className="map-drone"
-                style={{ left: `${mapX(d.position.x)}%`, top: `${mapY(d.position.z)}%` }}
-                title={`${d.id} — ${d.status}`}
-              >
-                <Navigation />
+      {/* ==========================================================
+          LIVE OPERATIONS
+          Full-width city picture followed by the priority queue
+          and live activity feed. Drone fleet remains available
+          in the map and top metrics, but has no separate panel.
+          ========================================================== */}
+      <section
+        className="command-grid command-grid-optimized"
+        style={{ gridTemplateColumns: '1fr' }}
+      >
+        <div
+          className="command-column command-column-left"
+          style={{ width: '100%' }}
+        >
+          {/* LIVE CITY PICTURE — FULL WIDTH */}
+          <article className="rqcc-panel map-panel">
+            <PanelHeading
+              title="Live city picture"
+              subtitle="Digital twin"
+              right={snapshot?.session_id || 'metro_session_01'}
+            />
+
+            <div className="tactical-map">
+              {snapshot?.simulation_frame_base64 && (
+                <img
+                  src={`data:${snapshot.simulation_frame_mime_type || 'image/jpeg'};base64,${snapshot.simulation_frame_base64}`}
+                  alt="Live Godot Digital Twin"
+                  className="absolute inset-0 w-full h-full object-cover opacity-75 rounded-lg"
+                />
+              )}
+
+              <div className="map-grid relative z-10" />
+              <div className="map-north">N</div>
+
+              {Object.values(snapshot?.buildings || {}).map((b: any) => (
+                <div
+                  key={b.id}
+                  className={`building ${b.damage_level && b.damage_level !== 'INTACT' ? 'damaged' : ''}`}
+                  style={{
+                    left: `${mapX(b.center.x)}%`,
+                    top: `${mapY(b.center.z)}%`,
+                    width: `${Math.max(1.5, b.size_x / 7.2)}%`,
+                    height: `${Math.max(1.5, b.size_z / 7.2)}%`,
+                  }}
+                  title={b.name}
+                />
+              ))}
+
+              {Object.values(snapshot?.hazards || {}).map((h: any) =>
+                h.active ? (
+                  <div
+                    key={h.id}
+                    className="hazard-zone"
+                    style={{
+                      left: `${mapX(h.center.x)}%`,
+                      top: `${mapY(h.center.z)}%`,
+                      width: `${Math.max(4, (h.radius_m * 2) / 7.2)}%`,
+                      height: `${Math.max(4, (h.radius_m * 2) / 7.2)}%`,
+                    }}
+                    title={h.type}
+                  />
+                ) : null
+              )}
+
+              {victims.map(v => (
+                <div
+                  key={v.id}
+                  className={`map-victim ${priorityColor(v.priority_class)}`}
+                  style={{
+                    left: `${mapX(v.location.x)}%`,
+                    top: `${mapY(v.location.z)}%`,
+                  }}
+                  title={`${v.id} — ${v.priority_class}`}
+                />
+              ))}
+
+              {drones.map(d => (
+                <div
+                  key={d.id}
+                  className="map-drone"
+                  style={{
+                    left: `${mapX(d.position.x)}%`,
+                    top: `${mapY(d.position.z)}%`,
+                  }}
+                  title={`${d.id} — ${d.status}`}
+                >
+                  <Navigation />
+                </div>
+              ))}
+
+              <div className="map-caption">Live operational state</div>
+
+              <div className="map-legend">
+                <span><i className="legend-dot critical" /> Critical</span>
+                <span><i className="legend-dot high" /> High</span>
+                <span><i className="legend-drone" /> Drone</span>
+                <span><i className="legend-hazard" /> Hazard</span>
               </div>
-            ))}
-            <div className="map-caption">Live operational state</div>
-            <div className="map-legend">
-              <span><i className="legend-dot critical" /> Critical</span>
-              <span><i className="legend-dot high" /> High</span>
-              <span><i className="legend-drone" /> Drone</span>
-              <span><i className="legend-hazard" /> Hazard</span>
             </div>
-          </div>
-        </article>
+          </article>
 
-        <article className="rqcc-panel fleet-panel">
-          <PanelHeading title="Drone fleet" subtitle="Resource readiness" right={`${drones.length} units`} />
-          <div className="fleet-list">
-            {drones.length === 0 && <EmptyState text="No drone telemetry received." />}
-            {drones.map(d => (
-              <div className="fleet-item" key={d.id}>
-                <div className="fleet-unit-icon"><Navigation /></div>
-                <div className="fleet-unit-copy">
-                  <strong>{d.id}</strong>
-                  <span>{d.callsign}</span>
-                </div>
-                <div className="fleet-unit-state">
-                  <strong>{d.battery_percent.toFixed(0)}%</strong>
-                  <span>{d.status}</span>
-                </div>
-                <div className="fleet-battery"><i style={{ width: `${Math.max(0, Math.min(100, d.battery_percent))}%` }} /></div>
-              </div>
-            ))}
-          </div>
-          <div className="panel-footnote"><span>{idleDrones} available</span><span>{activeMissions.length} on mission</span></div>
-        </article>
-      </section>
+          {/* PRIORITY QUEUE */}
+          <article className="rqcc-panel priority-panel">
+            <PanelHeading
+              title="Priority queue"
+              subtitle="Victim intelligence"
+              right={`${victims.length} tracked`}
+            />
 
-      <section className="lower-grid">
-        <article className="rqcc-panel">
-          <PanelHeading title="Priority queue" subtitle="Victim intelligence" right={`${victims.length} tracked`} />
-          <div className="priority-list">
-            {topVictims.length === 0 && <EmptyState text="No victims detected." />}
-            {topVictims.map(v => (
-              <div className="priority-row" key={v.id}>
-                <span className={`priority-pill ${priorityColor(v.priority_class)}`}>{v.priority_class}</span>
-                <div className="priority-person">
-                  <strong>{v.id} · {v.people_count} {v.people_count === 1 ? 'person' : 'people'}</strong>
-                  <span>{v.hazard_type?.replaceAll('_', ' ') || 'Unknown hazard'} · {v.status}</span>
-                </div>
-                <span className="priority-score">{v.priority_score.toFixed(0)}</span>
-                <ArrowUpRight className="row-arrow" />
-              </div>
-            ))}
-          </div>
-        </article>
+            <div className="priority-list">
+              {topVictims.length === 0 && (
+                <EmptyState text="No victims detected." />
+              )}
 
-        <article className="rqcc-panel">
-          <PanelHeading title="Live activity" subtitle="Latest system events" right={`${events.length} events`} />
-          <div className="activity-list">
-            {latestEvents.length === 0 && <EmptyState text="Waiting for live events." />}
-            {latestEvents.map((event: any, index) => (
-              <div className="activity-row" key={event.event_id || index}>
-                <span className="activity-time">
-                  {new Date((event.timestamp || Date.now() / 1000) * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                </span>
-                <span className="activity-marker" />
-                <div>
-                  <strong>{event.event_type || 'System event'}</strong>
-                  <span>{event.payload?.message || event.payload?.drone_id || event.payload?.session_id || event.source || 'State update received'}</span>
-                </div>
-              </div>
-            ))}
-          </div>
-        </article>
-      </section>
+              {topVictims.map(v => (
+                <div className="priority-row" key={v.id}>
+                  <span className={`priority-pill ${priorityColor(v.priority_class)}`}>
+                    {v.priority_class}
+                  </span>
 
-      <section className="insight-strip">
-        <div className="insight-icon"><Brain /></div>
-        <div className="insight-copy">
-          <span className="section-kicker">DECISION SUPPORT</span>
-          <strong>Explainable resource allocation</strong>
-          <p>Capability, availability, distance, battery and current risk are evaluated before a mission is recommended.</p>
+                  <div className="priority-person">
+                    <strong>
+                      {v.id} · {v.people_count} {v.people_count === 1 ? 'person' : 'people'}
+                    </strong>
+                    <span>
+                      {v.hazard_type?.replaceAll('_', ' ') || 'Unknown hazard'} · {v.status}
+                    </span>
+                  </div>
+
+                  <span className="priority-score">
+                    {v.priority_score.toFixed(0)}
+                  </span>
+
+                  <ArrowUpRight className="row-arrow" />
+                </div>
+              ))}
+            </div>
+          </article>
+
+          {/* LIVE ACTIVITY */}
+          <article className="rqcc-panel activity-panel">
+            <PanelHeading
+              title="Live activity"
+              subtitle="Latest system events"
+              right={`${events.length} events`}
+            />
+
+            <div className="activity-list">
+              {latestEvents.length === 0 && (
+                <EmptyState text="Waiting for live events." />
+              )}
+
+              {latestEvents.map((event: any, index) => (
+                <div
+                  className="activity-row"
+                  key={event.event_id || index}
+                >
+                  <span className="activity-time">
+                    {new Date(
+                      (event.timestamp || Date.now() / 1000) * 1000
+                    ).toLocaleTimeString([], {
+                      hour: '2-digit',
+                      minute: '2-digit',
+                    })}
+                  </span>
+
+                  <span className="activity-marker" />
+
+                  <div>
+                    <strong>
+                      {event.event_type || 'System event'}
+                    </strong>
+                    <span>
+                      {event.payload?.message ||
+                        event.payload?.drone_id ||
+                        event.payload?.session_id ||
+                        event.source ||
+                        'State update received'}
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </article>
         </div>
-        <button className="secondary-command" onClick={async () => setSearchPlan(await api.getSearchPlan())}>
-          Preview coverage plan
-          <ArrowUpRight />
-        </button>
-        {searchPlan && (
-          <div className="coverage-summary">
-            <strong>{searchPlan.drone_count} scout drones</strong>
-            <span>{searchPlan.planner} · {searchPlan.motion_planner}</span>
-          </div>
-        )}
       </section>
+
     </div>
   );
 }
