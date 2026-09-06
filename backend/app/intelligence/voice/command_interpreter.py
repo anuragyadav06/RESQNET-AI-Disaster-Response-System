@@ -143,6 +143,19 @@ class VoiceCommandInterpreter:
             if re.search(r"\b(?:send|dispatch|deploy|route|move|bring|assign|activate|launch)\b", t):
                 return {"intent": "DISPATCH_RESPONSE", "parameters": {"victim_id": victim_id, "objective": "RESCUE_EXTRACTION", "auto_select": True}, "confidence": 0.91, "matched_via": "victim-target"}
 
+        # Explicit fleet/capability dispatch WITHOUT a concrete victim.
+        # This MUST run before generic AUTO_DISPATCH so that words such as
+        # "rescue", "medical", and "heavy lift" are not discarded and the
+        # mission planner cannot fall back to victim medical severity.
+        if re.search(r"\b(?:send|dispatch|deploy|launch|activate)\b.*\b(?:rescue|rescuer|extraction|extract|evacuation|evacuate)\b.*\b(?:drones?|units?|teams?)\b", t) or re.search(r"\b(?:rescue|rescuer|extraction|extract|evacuation|evacuate)\b.*\b(?:drones?|units?|teams?)\b", t):
+            return {"intent": "AUTO_DISPATCH", "parameters": {"objective": "RESCUE_EXTRACTION"}, "confidence": 0.99, "matched_via": "explicit-capability"}
+
+        if re.search(r"\b(?:send|dispatch|deploy|launch|activate)\b.*\b(?:medical|medic|doctor|medical\s+support)\b.*\b(?:drones?|units?|teams?)\b", t) or re.search(r"\b(?:medical|medic|doctor|medical\s+support)\b.*\b(?:drones?|units?|teams?)\b", t):
+            return {"intent": "AUTO_DISPATCH", "parameters": {"objective": "MEDICAL_SUPPLY_DROP"}, "confidence": 0.99, "matched_via": "explicit-capability"}
+
+        if re.search(r"\b(?:send|dispatch|deploy|launch|activate)\b.*\b(?:heavy\s*lift|heavy\s+rescue|extrication|extricate|rubble|debris)\b.*\b(?:drones?|units?|teams?)\b", t) or re.search(r"\b(?:heavy\s*lift|heavy\s+rescue|extrication|extricate|rubble|debris)\b.*\b(?:drones?|units?|teams?)\b", t):
+            return {"intent": "AUTO_DISPATCH", "parameters": {"objective": "HEAVY_EXTRICATION"}, "confidence": 0.99, "matched_via": "explicit-capability"}
+
         # Automatic priority dispatch without a concrete victim.
         if re.search(r"\b(?:send|dispatch|deploy|launch|activate)\b.*\b(?:nearest|closest|available|appropriate|suitable|any)\b.*\b(?:drone|unit|team)\b", t) or re.search(r"\b(?:auto|automatic|automatically)\b.*\bdispatch\b", t):
             return {"intent": "AUTO_DISPATCH", "parameters": {}, "confidence": 0.96, "matched_via": "semantic"}

@@ -103,7 +103,6 @@ class WorldStateSnapshot(BaseModel):
     environment: EnvironmentalConditions = Field(default_factory=EnvironmentalConditions)
     
     telemetry_rate_hz: float = 0.0
-    command_latency_ms: float = 0.0
     stale_entities_count: int = 0
     simulation_frame_base64: Optional[str] = None
     simulation_frame_mime_type: Optional[str] = None

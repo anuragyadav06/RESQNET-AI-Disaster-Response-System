@@ -1791,29 +1791,91 @@ func _on_fleet_victim_detected(data: Dictionary) -> void:
 		location = _clamp_world_position(location_value as Vector3)
 	elif location_value is Dictionary:
 		var ld: Dictionary = location_value as Dictionary
-		location = _clamp_world_position(Vector3(float(ld.get("x", 0.0)), float(ld.get("y", 0.0)), float(ld.get("z", 0.0))))
+		location = _clamp_world_position(
+			Vector3(
+				float(ld.get("x", 0.0)),
+				float(ld.get("y", 0.0)),
+				float(ld.get("z", 0.0))
+			)
+		)
 
 	if detected_victims.has(victim_id):
 		return
 
 	detected_victims[victim_id] = true
-	var hazard := str(data.get("hazard_type", "UNKNOWN")).to_upper()
-	var drone_id := str(data.get("drone_id", data.get("captured_by", "UNKNOWN")))
-	var confidence := float(data.get("confidence", 0.94))
-	var corridor_id := str(data.get("corridor_id", data.get("grid_name", "")))
+
+	var drone_id := str(
+		data.get("drone_id", data.get("captured_by", "UNKNOWN"))
+	)
+	var hazard := str(
+		data.get("hazard_type", "UNKNOWN")
+	).to_upper()
+	var corridor_id := str(
+		data.get("corridor_id", data.get("grid_name", ""))
+	)
+
+	# The fleet now sends the camera frame in this same detection packet.
+	# Do NOT discard it and start a second asynchronous camera request.
+	var image_base64 := str(data.get("image_base64", ""))
+	var image_mime_type := str(
+		data.get("image_mime_type", "image/jpeg")
+	)
+
+	var confidence := float(data.get("confidence", 0.70))
+	var victim_state := str(
+		data.get("victim_state", "DETECTED")
+	).to_upper()
+	var trapped_by_structure := bool(
+		data.get("trapped_by_structure", false)
+	)
+	var flood_capture := bool(
+		data.get("flood_capture", false)
+	)
+	var cause := str(
+		data.get("cause", hazard)
+	).to_upper()
+
+	var civilian := _find_civilian_by_victim_id(victim_id)
+	if civilian != null and is_instance_valid(civilian):
+		victim_state = str(
+			civilian.get_meta("status", victim_state)
+		).to_upper()
+		trapped_by_structure = bool(
+			civilian.get_meta(
+				"trapped_by_structure",
+				trapped_by_structure
+			)
+		)
+		flood_capture = bool(
+			civilian.get_meta("flood_capture", flood_capture)
+		)
+		cause = str(
+			civilian.get_meta("cause", cause)
+		).to_upper()
+
+	var hazard_info: Dictionary = {}
+	var hazard_value: Variant = data.get("hazard", {})
+	if hazard_value is Dictionary:
+		hazard_info = hazard_value as Dictionary
 
 	victim_states[victim_id] = {
 		"victim_id": victim_id,
-		"status": "DETECTED",
+		"status": victim_state,
 		"location": location,
 		"source_drone_id": drone_id,
 		"hazard_type": hazard,
+		"cause": cause,
+		"trapped_by_structure": trapped_by_structure,
+		"flood_capture": flood_capture,
 		"corridor_id": corridor_id,
-		"evidence_available": false
+		"evidence_available": not image_base64.is_empty()
 	}
 
 	var observation := {
-		"observation_id": "OBS-%s-%d" % [victim_id, Time.get_ticks_msec()],
+		"observation_id": "OBS-%s-%d" % [
+			victim_id,
+			Time.get_ticks_msec()
+		],
 		"timestamp": Time.get_unix_time_from_system(),
 		"source_drone_id": drone_id,
 		"type": "VICTIM_LOCATED",
@@ -1823,17 +1885,52 @@ func _on_fleet_victim_detected(data: Dictionary) -> void:
 			"victim_id": victim_id,
 			"people_count": 1,
 			"search_axis": "Z",
-			"corridor_id": corridor_id
+			"corridor_id": corridor_id,
+			"hazard_type": hazard,
+			"hazard_info": hazard_info,
+			"victim_state": victim_state,
+			"cause": cause,
+			"trapped_by_structure": trapped_by_structure,
+			"flood_capture": flood_capture,
+			"image_capture": "GODOT_DIGITAL_TWIN_DRONE_CAMERA"
 		},
-		"notes": "Victim physically detected by authoritative Digital Twin scout corridor.",
+		"notes": "Scout detected victim and captured an actual Digital-Twin drone-camera frame.",
+		"image_base64": image_base64,
+		"image_mime_type": image_mime_type,
 		"hazard_type": hazard,
 		"corridor_id": corridor_id
 	}
 
-	_send_json({"type": "OBSERVATION", "session_id": SESSION_ID, "observation": observation})
-	_request_victim_evidence(victim_id, _find_civilian_by_victim_id(victim_id), drone_id, location, -1)
+	# This single observation now carries BOTH the victim ID and the
+	# actual image. FastAPI/IncidentAgent already supports these optional
+	# evidence fields and will store them on that victim record.
+	_send_json({
+		"type": "OBSERVATION",
+		"session_id": SESSION_ID,
+		"observation": observation
+	})
+
 	victim_detected.emit(data)
-	backend_event.emit("VICTIM DETECTED | %s | %s | %s | AUTHORITATIVE CORRIDOR" % [victim_id, hazard, drone_id])
+
+	backend_event.emit(
+		"VICTIM DETECTED | %s | %s | %s | CAMERA %s" % [
+			victim_id,
+			hazard,
+			drone_id,
+			"CAPTURED" if not image_base64.is_empty() else "FAILED"
+		]
+	)
+
+	# If the first capture failed, retain the existing retry mechanism
+	# instead of pretending an image exists.
+	if image_base64.is_empty():
+		_request_victim_evidence(
+			victim_id,
+			civilian,
+			drone_id,
+			location,
+			-1
+		)
 
 
 func _on_fleet_response_event(data: Dictionary) -> void:

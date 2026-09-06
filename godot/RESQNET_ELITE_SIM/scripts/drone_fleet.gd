@@ -57,6 +57,12 @@ const SCOUT_SENSOR_RADIUS: float = 60.0
 
 const RESPONSE_ON_SITE_TIME: float = 4.0
 
+# Evidence camera layers. Live search corridors/labels stay visible in the
+# simulation, but are excluded from drone evidence frames so they never
+# occlude the victim image.
+const EVIDENCE_WORLD_LAYER: int = 1
+const SEARCH_OVERLAY_LAYER: int = 2
+
 const BASE_POSITION: Vector3 = Vector3(0.0, RESPONSE_ALTITUDE, MAP_MIN + CORRIDOR_MARGIN)
 
 # Response fleet staging line: all 15 standby aircraft are parked on the
@@ -400,6 +406,12 @@ func _add_corridor_line(x: float, index: int) -> void:
 		0.45
 	)
 
+	# Search corridors are a visual overlay only. Put them on a dedicated
+	# layer so the evidence camera can exclude them without hiding them from
+	# the live Digital Twin view.
+	line.set_layer_mask_value(1, false)
+	line.set_layer_mask_value(SEARCH_OVERLAY_LAYER, true)
+
 	grid_root.add_child(line)
 
 func _add_grid_label(text: String, p: Vector3) -> void:
@@ -410,6 +422,11 @@ func _add_grid_label(text: String, p: Vector3) -> void:
 	label.modulate = Color(0.35, 0.95, 1.0, 0.9)
 	label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
 	label.position = p
+
+	# Corridor labels are also overlay-only and must not appear in evidence.
+	label.set_layer_mask_value(1, false)
+	label.set_layer_mask_value(SEARCH_OVERLAY_LAYER, true)
+
 	label_root.add_child(label)
 
 # ---------------------------------------------------------------------------
@@ -1372,6 +1389,10 @@ func _capture_victim_camera(
 	camera.fov = 42.0
 	camera.near = 0.5
 	camera.far = 1200.0
+	# Render only the normal Digital Twin world layer. Search corridor lines
+	# and labels live on layer 2, so they remain visible in the simulation
+	# but cannot occlude the evidence frame.
+	camera.cull_mask = 1 << (EVIDENCE_WORLD_LAYER - 1)
 	camera.current = true
 	camera.position = drone_node.global_position
 

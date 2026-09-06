@@ -54,5 +54,4 @@ class DroneEntity(BaseModel):
     home_facility_id: str = "BASE-ALPHA"
     
     last_telemetry_timestamp: float = 0.0
-    telemetry_latency_ms: float = 12.0
     uncertainty_state: UncertaintyState = UncertaintyState.CONFIRMED

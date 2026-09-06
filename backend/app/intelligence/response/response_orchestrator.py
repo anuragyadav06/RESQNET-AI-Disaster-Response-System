@@ -30,18 +30,37 @@ class ResponseOrchestrator:
         await event_bus.publish("RECON_GRID_ACTIVATED", result)
         return result
 
-    async def triage_and_dispatch(self) -> Dict[str, Any]:
+    async def triage_and_dispatch(self, objective: MissionObjective | None = None) -> Dict[str, Any]:
+        """Prioritize victims and dispatch up to three missions.
+
+        When the operator explicitly requests a capability (RESCUE, MEDICAL,
+        or HEAVY_EXTRICATION), preserve that objective all the way through to
+        MissionAgent. A generic dispatch intentionally leaves objective=None so
+        the normal victim-severity policy can choose it.
+        """
         victims = await prioritization_agent.prioritize_all()
         dispatched = []
         for victim in sorted(victims, key=lambda v: v.priority_score, reverse=True):
             if victim.assigned_drone_id:
                 continue
-            plan, message = await mission_agent.create_and_dispatch_mission_for_victim(victim.id)
+            plan, message = await mission_agent.create_and_dispatch_mission_for_victim(
+                victim.id, objective_override=objective
+            )
             if plan:
-                dispatched.append({"mission_id": plan.mission_id, "victim_id": victim.id, "message": message})
+                dispatched.append({
+                    "mission_id": plan.mission_id,
+                    "victim_id": victim.id,
+                    "drone_id": plan.assigned_drone_id,
+                    "objective": plan.objective.value,
+                    "message": message,
+                })
                 if len(dispatched) >= 3:
                     break
-        result = {"prioritized": len(victims), "dispatched": dispatched}
+        result = {
+            "prioritized": len(victims),
+            "requested_objective": objective.value if objective else None,
+            "dispatched": dispatched,
+        }
         await event_bus.publish("RESPONSE_CYCLE_EXECUTED", result)
         return result
 

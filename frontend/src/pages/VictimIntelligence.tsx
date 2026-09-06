@@ -12,7 +12,12 @@ const imageSrc = (v: Victim) => v.evidence?.image_base64
 export const VictimIntelligence: React.FC<VictimIntelligenceProps> = ({ onRefresh, snapshot }) => {
   const [actionLoading, setActionLoading] = useState('');
   const [msg, setMsg] = useState('');
-  const victims = useMemo(() => Object.values(snapshot?.victims || {}).sort((a,b) => b.priority_score-a.priority_score), [snapshot]);
+  const victims = useMemo(
+    () => Object.values(snapshot?.victims || {})
+      .filter((v) => !v.assigned_mission_id && !['EVACUATED', 'RESCUED', 'ASSISTED', 'TREATED', 'STABILIZED', 'MEDICALLY_STABILIZED', 'RESOLVED', 'SAFE'].includes(v.status))
+      .sort((a,b) => b.priority_score-a.priority_score),
+    [snapshot]
+  );
   const drones = useMemo(() => Object.values(snapshot?.drones || {}), [snapshot]);
   const available = (cap: string) => drones.filter(d => d.status === 'IDLE' && d.capabilities.includes(cap as any)).length;
 

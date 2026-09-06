@@ -24,9 +24,6 @@ class ConnectionManager:
         # Set of active frontend WebSockets
         self.frontend_clients: Set[WebSocket] = set()
         
-        # Pending commands awaiting ACK: command_id -> {sent_time, payload}
-        self.pending_commands: Dict[str, Dict[str, Any]] = {}
-        
         self._lock = asyncio.Lock()
         self._broadcast_task: Optional[asyncio.Task] = None
 
@@ -88,10 +85,10 @@ class ConnectionManager:
 
     async def send_command_to_system_b(self, command: CommandPayload) -> bool:
         """Sends a validated machine-readable command to the connected Godot simulation."""
-        sent_time = time.time()
-        command.issued_at = sent_time
+        issued_at = time.time()
+        command.issued_at = issued_at
         if command.expires_at <= 0:
-            command.expires_at = sent_time + 60.0  # 60 second default timeout
+            command.expires_at = issued_at + 60.0  # 60 second default timeout
         
         msg = {
             "type": "COMMAND",
@@ -103,13 +100,6 @@ class ConnectionManager:
             if not self.simulation_clients:
                 logger.warning(f"Cannot send command {command.command_id}: No System B simulation connected")
                 return False
-            
-            # Store in pending queue
-            self.pending_commands[command.command_id] = {
-                "sent_time": sent_time,
-                "command": command,
-            }
-            world_state.last_command_sent_time = sent_time
             
             # Broadcast to all connected simulation clients (usually 1)
             sent = False
@@ -137,22 +127,13 @@ class ConnectionManager:
             return sent
 
     async def handle_command_ack(self, ack: CommandAck):
-        recv_time = time.time()
-        command_id = ack.command_id
-        latency_ms = 0.0
-        
-        if command_id in self.pending_commands:
-            sent_time = self.pending_commands[command_id]["sent_time"]
-            latency_ms = (recv_time - sent_time) * 1000.0
-            world_state.command_latency_ms = round(latency_ms, 2)
-            del self.pending_commands[command_id]
-        
+        """Record command acknowledgement without performance measurement."""
         await audit_logger.log_event(
             event_type=AuditEventType.COMMAND_ACKNOWLEDGED,
-            decision=f"Command {command_id} acknowledged by System B: {ack.status}",
+            decision=f"Command {ack.command_id} acknowledged by System B: {ack.status}",
             reason=ack.reason or "Simulation acknowledged command acceptance",
-            inputs={"command_id": command_id, "drone_id": ack.drone_id},
-            output={"status": ack.status, "latency_ms": latency_ms},
+            inputs={"command_id": ack.command_id, "drone_id": ack.drone_id},
+            output={"status": ack.status},
             confidence=1.0,
             affected_entities=[ack.drone_id],
         )

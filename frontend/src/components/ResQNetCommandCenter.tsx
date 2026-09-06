@@ -9,7 +9,6 @@ import {
   Mic,
   MicOff,
   Navigation,
-  Radio,
   RefreshCw,
   Search,
   Send,
@@ -34,7 +33,7 @@ const priorityColor = (priority: string) => {
 const mapX = (x: number) => ((x + 360) / 720) * 100;
 const mapY = (z: number) => ((z + 360) / 720) * 100;
 
-export function ResQNetCommandCenter({ snapshot, isConnected, latencyMs, refresh }: { snapshot: WorldStateSnapshot | null; isConnected: boolean; latencyMs: number; refresh: () => void }) {
+export function ResQNetCommandCenter({ snapshot, isConnected, refresh }: { snapshot: WorldStateSnapshot | null; isConnected: boolean; refresh: () => void }) {
   const [events, setEvents] = useState<any[]>([]);
   const [searchPlan, setSearchPlan] = useState<any>(null);
   const [busy, setBusy] = useState('');
@@ -55,7 +54,28 @@ export function ResQNetCommandCenter({ snapshot, isConnected, latencyMs, refresh
   }, [loadEvents]);
 
   const drones = useMemo(() => Object.values(snapshot?.drones || {}) as DroneEntity[], [snapshot]);
-  const victims = useMemo(() => Object.values(snapshot?.victims || {}) as Victim[], [snapshot]);
+
+  // Keep the operational radar focused only on victims that still need a response.
+  // Once any response mission (medical, rescue, or heavy lift) is assigned, the
+  // victim is removed from active operational views. The backend record is NOT
+  // deleted, so mission/audit history remains intact.
+  const victims = useMemo(() => {
+    const terminalStatuses = new Set([
+      'EVACUATED',
+      'RESCUED',
+      'ASSISTED',
+      'TREATED',
+      'STABILIZED',
+      'MEDICALLY_STABILIZED',
+      'RESOLVED',
+      'SAFE',
+    ]);
+
+    return (Object.values(snapshot?.victims || {}) as Victim[]).filter(v =>
+      !v.assigned_mission_id && !terminalStatuses.has(v.status)
+    );
+  }, [snapshot]);
+
   const critical = victims.filter(v => v.priority_class === 'CRITICAL').length;
   const activeMissions = drones.filter(d => d.current_mission_id);
   const idleDrones = drones.filter(d => d.status === 'IDLE').length;
@@ -90,50 +110,130 @@ export function ResQNetCommandCenter({ snapshot, isConnected, latencyMs, refresh
     }
   };
 
-  const startVoice = () => {
-    const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (!SR) {
-      speak('Browser speech recognition is unavailable. Use Chrome or enter a command manually.');
+  const startVoice = async () => {
+    const SpeechRecognitionCtor =
+      (window as any).SpeechRecognition ||
+      (window as any).webkitSpeechRecognition;
+
+    if (!SpeechRecognitionCtor) {
+      setVoiceState('error');
+      speak('Voice recognition is not supported by this browser. Try Google Chrome, or use the text command box.');
       return;
     }
 
-    const rec = new SR();
+    // Verify microphone access separately. This prevents microphone permission
+    // errors from being confused with speech-recognition service errors.
+    try {
+      if (!navigator.mediaDevices?.getUserMedia) {
+        throw new Error('Microphone access is not available in this browser.');
+      }
+
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      stream.getTracks().forEach(track => track.stop());
+    } catch (error: any) {
+      setVoiceState('error');
+      const name = error?.name || '';
+
+      if (name === 'NotAllowedError' || name === 'SecurityError') {
+        speak('Microphone permission is blocked. Allow microphone access for this site and try again.');
+      } else if (name === 'NotFoundError') {
+        speak('No microphone was found. Connect or enable a microphone and try again.');
+      } else {
+        speak(`Microphone access failed. ${error?.message || 'Check your browser microphone settings.'}`);
+      }
+      return;
+    }
+
+    // Stop any previous session cleanly.
+    if (recognitionRef.current) {
+      try { recognitionRef.current.abort(); } catch { /* already stopped */ }
+      recognitionRef.current = null;
+    }
+
+    const rec = new SpeechRecognitionCtor();
     recognitionRef.current = rec;
-    rec.lang = 'en-IN';
+
+    // Keep recognition deliberately simple and broadly compatible.
+    // Do NOT use SpeechRecognitionPhrase/phrases or processLocally here:
+    // unsupported implementations can raise errors such as
+    // "phrases-not-supported" before speech is even captured.
+    rec.lang = 'en-US';
     rec.continuous = false;
     rec.interimResults = true;
-    rec.onresult = (e: any) => {
-      const text = Array.from(e.results).map((r: any) => r[0].transcript).join('');
-      setTranscript(text);
-      if (e.results[e.results.length - 1].isFinal) setCommand(text);
+    rec.maxAlternatives = 1;
+
+    rec.onstart = () => {
+      setVoiceState('listening');
+      setTranscript('Listening…');
+      setResponse('Listening for an operator command…');
     };
-    rec.onstart = () => setVoiceState('listening');
+
+    rec.onresult = (e: any) => {
+      let finalText = '';
+      let interimText = '';
+
+      for (let i = e.resultIndex || 0; i < e.results.length; i += 1) {
+        const result = e.results[i];
+        const text = result?.[0]?.transcript || '';
+        if (result.isFinal) finalText += `${text} `;
+        else interimText += `${text} `;
+      }
+
+      const combined = (finalText || interimText).trim();
+      if (combined) {
+        setTranscript(combined);
+      }
+
+      if (finalText.trim()) {
+        const spokenCommand = finalText.trim();
+        setCommand(spokenCommand);
+
+        // A successful voice recognition result is a command, not merely text.
+        // Execute it directly so the operator does not need a second click.
+        void runCommand(spokenCommand);
+      }
+    };
+
     rec.onerror = (e: any) => {
-      setVoiceState('error');
       const code = e?.error || 'unknown';
+      setVoiceState('error');
+
       const messages: Record<string, string> = {
-        'no-speech': "No speech detected. Try again and speak clearly.",
-        'audio-capture': 'Microphone capture failed. Check the selected microphone.',
-        'not-allowed': 'Microphone permission is blocked. Allow microphone access for localhost:5173.',
-        'service-not-allowed': 'Browser speech recognition is disabled by the browser.',
-        'network': 'The browser speech service is unavailable. Your typed command still works; try Chrome with internet access or use text input.',
+        'no-speech': 'No speech detected. Press the microphone and speak a command clearly.',
+        'audio-capture': 'Microphone capture failed. Check that your microphone is connected and enabled.',
+        'not-allowed': 'Microphone permission is blocked. Allow microphone access for this site.',
+        'service-not-allowed': 'This browser has disabled its speech recognition service. Try Google Chrome.',
+        'language-not-supported': 'English speech recognition is not available in this browser. Try Google Chrome.',
+        'network': 'The browser speech service is unavailable. Try Google Chrome with internet access, or use the text command box.',
         'aborted': 'Voice capture stopped.',
       };
-      const msg = messages[code] ?? `Voice input failed (${code}). Type the command to continue.`;
-      if (code !== 'aborted') speak(msg);
+
+      // Do not speak the error for an intentional stop.
+      if (code !== 'aborted') {
+        speak(messages[code] || `Voice input failed (${code}). Check microphone and browser speech settings.`);
+      }
     };
-    rec.onend = () => { recognitionRef.current = null; setVoiceState('idle'); };
-    try { rec.start(); } catch (err: any) {
+
+    rec.onend = () => {
+      recognitionRef.current = null;
+      setVoiceState(current => current === 'error' ? 'error' : 'idle');
+    };
+
+    try {
+      rec.start();
+    } catch (error: any) {
       recognitionRef.current = null;
       setVoiceState('error');
-      speak(`Microphone could not start. ${err?.message || 'Use the text command box.'}`);
+      speak(`Voice recognition could not start. ${error?.message || 'Try again with microphone access enabled.'}`);
     }
   };
 
   const stopVoice = () => {
-    recognitionRef.current?.stop();
+    try { recognitionRef.current?.abort(); } catch { /* already stopped */ }
     recognitionRef.current = null;
+    setVoiceState('idle');
   };
+
 
   const INTENT_LABELS: Record<string, string> = {
     GET_STATUS: 'get the current status',
@@ -142,10 +242,11 @@ export function ResQNetCommandCenter({ snapshot, isConnected, latencyMs, refresh
     AUTO_DISPATCH: 'send the nearest available drone',
   };
 
-  const runCommand = async () => {
-    if (!command.trim()) return;
+  const runCommand = async (commandOverride?: string) => {
+    const text = (commandOverride ?? command).trim();
+    if (!text) return;
     try {
-      const executed = await api.executeOperatorCommand(command);
+      const executed = await api.executeOperatorCommand(text);
       const parsed = executed.parsed || {};
       const result = executed.result || {};
       if (executed.status === 'NOT_EXECUTED') {
@@ -230,7 +331,6 @@ export function ResQNetCommandCenter({ snapshot, isConnected, latencyMs, refresh
           <Metric label="Drone fleet" value={`${idleDrones}/${drones.length || 31}`} detail="available" icon={<Navigation />} />
           <Metric label="Active missions" value={activeMissions.length} detail="live assignments" icon={<Crosshair />} />
           <Metric label="Critical victims" value={critical} detail={`${victims.length} tracked`} icon={<AlertTriangle />} tone="critical" />
-          <Metric label="System latency" value={`${latencyMs} ms`} detail={`${snapshot?.telemetry_rate_hz?.toFixed(1) || '0.0'} Hz telemetry`} icon={<Radio />} />
         </div>
       </section>
 
@@ -261,7 +361,7 @@ export function ResQNetCommandCenter({ snapshot, isConnected, latencyMs, refresh
                 {recognitionRef.current ? <MicOff /> : <Mic />}
               </button>
             </div>
-            <button className="primary-command-button" onClick={runCommand}>
+            <button className="primary-command-button" onClick={() => void runCommand()}>
               <Send /> Execute
             </button>
           </div>
@@ -323,7 +423,7 @@ export function ResQNetCommandCenter({ snapshot, isConnected, latencyMs, refresh
             {victims.map(v => (
               <div
                 key={v.id}
-                className={`map-victim ${v.status === 'EVACUATED' ? 'rescued' : priorityColor(v.priority_class)}`}
+                className={`map-victim ${priorityColor(v.priority_class)}`}
                 style={{ left: `${mapX(v.location.x)}%`, top: `${mapY(v.location.z)}%` }}
                 title={`${v.id} — ${v.priority_class}`}
               />

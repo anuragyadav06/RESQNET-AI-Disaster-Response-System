@@ -8,17 +8,14 @@ import {
   Flame,
   Radio,
   Shield,
-  Zap,
   Play,
   RotateCcw,
   RefreshCw,
-  Clock,
   HeartPulse,
   Send,
   Sliders,
   CheckCircle2,
   XCircle,
-  Truck,
   Wrench,
 } from 'lucide-react';
 
@@ -145,10 +142,19 @@ export const OperationsDashboard: React.FC<OperationsDashboardProps> = ({
     }
   };
 
-  // KPIs
-  const criticalCount = snapshot
-    ? Object.values(snapshot.victims).filter((v) => v.priority_class === 'CRITICAL').length
-    : 0;
+  // KPIs — total detected victims remains the denominator; critical count
+  // is calculated from unresolved victims using the explainable assessment.
+  const allVictims = snapshot ? Object.values(snapshot.victims) : [];
+  const terminalVictimStatuses = new Set([
+    'RESCUED', 'ASSISTED', 'EVACUATED', 'TREATED',
+    'STABILIZED', 'MEDICALLY_STABILIZED', 'RESOLVED', 'SAFE',
+  ]);
+  const activeVictims = allVictims.filter(
+    (v) => !v.assigned_mission_id && !terminalVictimStatuses.has(String(v.status).toUpperCase())
+  );
+  const criticalVictims = activeVictims.filter((v) => v.priority_class === 'CRITICAL');
+  const criticalCount = criticalVictims.length;
+  const totalVictimCount = allVictims.length;
   const activeIncidentsCount = snapshot ? Object.keys(snapshot.incidents).length : 0;
   const idleDronesCount = snapshot
     ? Object.values(snapshot.drones).filter((d) => d.status === 'IDLE').length
@@ -160,34 +166,10 @@ export const OperationsDashboard: React.FC<OperationsDashboardProps> = ({
   return (
     <div className="space-y-4">
       {/* 1. Live Operation Status Banner */}
-      <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
-        {/* System B Status */}
-        <div className="bg-[#0b121e] border border-cyan-900/40 p-3 rounded-lg flex items-center gap-3">
-          <div className={`p-2 rounded-lg ${snapshot?.system_b_connected ? 'bg-emerald-950 text-emerald-400' : 'bg-amber-950 text-amber-400'}`}>
-            <Radio className="w-5 h-5 animate-pulse" />
-          </div>
-          <div>
-            <div className="text-[10px] text-slate-400 uppercase font-mono tracking-wider">System B Link</div>
-            <div className="text-sm font-bold font-mono text-slate-200">
-              {snapshot?.system_b_connected ? 'GODOT ONLINE' : 'INTERNAL SIM'}
-            </div>
-            <div className="text-[10px] text-slate-500 font-mono">{snapshot?.telemetry_rate_hz || 10.0} Hz @ {latencyMs}ms</div>
-          </div>
-        </div>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        
 
-        {/* Disaster Phase */}
-        <div className="bg-[#0b121e] border border-cyan-900/40 p-3 rounded-lg flex items-center gap-3">
-          <div className={`p-2 rounded-lg ${snapshot?.environment.seismic_activity_richter ? 'bg-red-950 text-red-400 animate-bounce' : 'bg-slate-800 text-slate-400'}`}>
-            <Activity className="w-5 h-5" />
-          </div>
-          <div>
-            <div className="text-[10px] text-slate-400 uppercase font-mono tracking-wider">Seismic State</div>
-            <div className="text-sm font-bold font-mono text-slate-200">
-              {snapshot?.environment.seismic_activity_richter ? `${snapshot.environment.seismic_activity_richter} MAG` : 'QUIESCENT'}
-            </div>
-            <div className="text-[10px] text-slate-500 font-mono">T+{snapshot?.simulation_time.toFixed(1) || '0.0'}s</div>
-          </div>
-        </div>
+        
 
         {/* Critical Victims */}
         <div className="bg-[#0b121e] border border-cyan-900/40 p-3 rounded-lg flex items-center gap-3">
@@ -196,8 +178,8 @@ export const OperationsDashboard: React.FC<OperationsDashboardProps> = ({
           </div>
           <div>
             <div className="text-[10px] text-slate-400 uppercase font-mono tracking-wider">Critical Victims</div>
-            <div className="text-sm font-bold font-mono text-red-400">{criticalCount} <span className="text-xs text-slate-400 font-normal">/ {snapshot ? Object.keys(snapshot.victims).length : 0}</span></div>
-            <div className="text-[10px] text-slate-500 font-mono">High-urgency triage</div>
+            <div className="text-sm font-bold font-mono text-red-400">{criticalCount} <span className="text-xs text-slate-400 font-normal">/ {totalVictimCount}</span></div>
+            <div className="text-[10px] text-slate-500 font-mono">State + hazard + medical + accessibility</div>
           </div>
         </div>
 
@@ -227,17 +209,7 @@ export const OperationsDashboard: React.FC<OperationsDashboardProps> = ({
           </div>
         </div>
 
-        {/* World Version */}
-        <div className="bg-[#0b121e] border border-cyan-900/40 p-3 rounded-lg flex items-center gap-3">
-          <div className="p-2 rounded-lg bg-slate-800 text-slate-400">
-            <Zap className="w-5 h-5" />
-          </div>
-          <div>
-            <div className="text-[10px] text-slate-400 uppercase font-mono tracking-wider">State Engine</div>
-            <div className="text-sm font-bold font-mono text-slate-300">v{snapshot?.state_version || 1}</div>
-            <div className="text-[10px] text-emerald-400 font-mono">Synchronized</div>
-          </div>
-        </div>
+        
       </div>
 
       {/* 2. Operational Action Toolbar */}
@@ -387,6 +359,14 @@ export const OperationsDashboard: React.FC<OperationsDashboardProps> = ({
                       <div className="flex justify-between text-[11px]">
                         <span className="text-slate-400">Priority Score:</span>
                         <span className="font-mono text-cyan-300 font-bold">{selectedEntity.priority_score.toFixed(3)}</span>
+                      </div>
+                      <div className="flex justify-between text-[11px]">
+                        <span className="text-slate-400">Confidence:</span>
+                        <span className="font-mono text-emerald-400">{(selectedEntity.confidence * 100).toFixed(0)}%</span>
+                      </div>
+                      <div className="pt-1 border-t border-slate-800 mt-1 text-[10px]">
+                        <span className="text-cyan-400 font-bold">Assessment basis:</span>
+                        <span className="text-slate-400"> observed state, hazard exposure, medical severity, survival urgency and accessibility.</span>
                       </div>
                     </div>
                     {selectedEntity.breakdown?.reasons && (

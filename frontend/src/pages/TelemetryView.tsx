@@ -4,10 +4,9 @@ import { Gauge, Radio, Battery, Zap, Compass, Activity } from 'lucide-react';
 
 interface TelemetryViewProps {
   snapshot: WorldStateSnapshot | null;
-  latencyMs: number;
 }
 
-export const TelemetryView: React.FC<TelemetryViewProps> = ({ snapshot, latencyMs }) => {
+export const TelemetryView: React.FC<TelemetryViewProps> = ({ snapshot }) => {
   const drones = snapshot ? Object.values(snapshot.drones) : [];
 
   return (
@@ -24,7 +23,6 @@ export const TelemetryView: React.FC<TelemetryViewProps> = ({ snapshot, latencyM
         </div>
         <div className="flex items-center gap-3 text-xs font-mono">
           <span className="text-slate-400">Rate: <strong className="text-cyan-300">{snapshot?.telemetry_rate_hz || 10.0} Hz</strong></span>
-          <span className="text-slate-400">Command Latency: <strong className="text-emerald-400">{latencyMs} ms</strong></span>
         </div>
       </div>
 

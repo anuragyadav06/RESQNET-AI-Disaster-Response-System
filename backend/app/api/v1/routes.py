@@ -382,7 +382,9 @@ async def execute_voice(req: VoiceCommandRequest):
     if intent == "START_RECON":
         result = await response_orchestrator.start_recon()
     elif intent == "AUTO_DISPATCH":
-        result = await response_orchestrator.triage_and_dispatch()
+        requested_objective = params.get("objective")
+        objective = MissionObjective(str(requested_objective)) if requested_objective else None
+        result = await response_orchestrator.triage_and_dispatch(objective=objective)
     elif intent == "DISPATCH_RESPONSE":
         objective = MissionObjective(str(params.get("objective", "RESCUE_EXTRACTION")))
         victim_id = str(params.get("victim_id", ""))

@@ -50,9 +50,6 @@ class WorldStateManager:
         
         self.telemetry_packet_count: int = 0
         self.telemetry_start_time: float = time.time()
-        self.last_command_sent_time: float = 0.0
-        self.last_command_ack_time: float = 0.0
-        self.command_latency_ms: float = 14.5
         
         self._initialize_metro_environment()
 
@@ -286,7 +283,6 @@ class WorldStateManager:
             simulation_frame_mime_type=self.simulation_frame_mime_type,
             simulation_frame_timestamp=self.simulation_frame_timestamp,
             telemetry_rate_hz=hz if self.system_b_connected else 0.0,
-            command_latency_ms=self.command_latency_ms,
             stale_entities_count=stale_count,
         )
 

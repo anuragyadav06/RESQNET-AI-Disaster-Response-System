@@ -31,7 +31,6 @@ export interface DroneEntity {
   target_victim_id?: string;
   home_facility_id: string;
   last_telemetry_timestamp: number;
-  telemetry_latency_ms: number;
   uncertainty_state: UncertaintyState;
 }
 
@@ -228,7 +227,6 @@ export interface WorldStateSnapshot {
   missions: Record<string, MissionPlan>;
   environment: EnvironmentalConditions;
   telemetry_rate_hz: number;
-  command_latency_ms: number;
   stale_entities_count: number;
   simulation_frame_base64?: string;
   simulation_frame_mime_type?: string;
@@ -242,7 +240,6 @@ export interface HealthStatus {
   simulation_time: number;
   state_version: number;
   telemetry_rate_hz: number;
-  command_latency_ms: number;
   stale_entities: number;
   timestamp: number;
 }

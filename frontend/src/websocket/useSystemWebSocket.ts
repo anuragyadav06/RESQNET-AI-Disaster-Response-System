@@ -8,10 +8,8 @@ const WS_URL = 'ws://localhost:8000/ws/frontend';
 export function useSystemWebSocket() {
   const [snapshot, setSnapshot] = useState<WorldStateSnapshot | null>(null);
   const [isConnected, setIsConnected] = useState<boolean>(false);
-  const [latencyMs, setLatencyMs] = useState<number>(12);
   const [lastUpdated, setLastUpdated] = useState<number>(Date.now());
   const wsRef = useRef<WebSocket | null>(null);
-  const pingIntervalRef = useRef<any>(null);
 
   const fetchFallback = useCallback(async () => {
     try {
@@ -36,20 +34,13 @@ export function useSystemWebSocket() {
           if (!isMounted) return;
           setIsConnected(true);
           console.log('[ResQNet WS] Connected to System A');
-
-          // Setup ping/pong latency measurement
-          pingIntervalRef.current = setInterval(() => {
-            if (ws.readyState === WebSocket.OPEN) {
-              const pingStart = Date.now();
-              ws.send(JSON.stringify({ type: 'PING', timestamp: pingStart }));
-            }
-          }, 2000);
         };
 
         ws.onmessage = (event) => {
           if (!isMounted) return;
           try {
             const msg = JSON.parse(event.data);
+
             if (msg.type === 'STATE_UPDATE' && msg.snapshot) {
               setSnapshot((prev) => ({
                 ...msg.snapshot,
@@ -71,9 +62,6 @@ export function useSystemWebSocket() {
               // victim, collapse, or rescue lifecycle events.
               fetchFallback();
               setLastUpdated(Date.now());
-            } else if (msg.type === 'PONG' && msg.timestamp) {
-              const rtt = Date.now() - msg.timestamp;
-              setLatencyMs(rtt);
             }
           } catch (err) {
             console.error('[ResQNet WS] Error parsing packet:', err);
@@ -87,7 +75,6 @@ export function useSystemWebSocket() {
         ws.onclose = () => {
           if (!isMounted) return;
           setIsConnected(false);
-          clearInterval(pingIntervalRef.current);
           console.log('[ResQNet WS] Disconnected. Retrying in 1.5s...');
           reconnectTimeout = setTimeout(connect, 1500);
         };
@@ -103,7 +90,6 @@ export function useSystemWebSocket() {
 
     return () => {
       isMounted = false;
-      clearInterval(pingIntervalRef.current);
       clearTimeout(reconnectTimeout);
       if (wsRef.current) {
         wsRef.current.close();
@@ -114,7 +100,6 @@ export function useSystemWebSocket() {
   return {
     snapshot,
     isConnected,
-    latencyMs,
     lastUpdated,
     refresh: fetchFallback,
   };

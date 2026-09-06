@@ -34,7 +34,7 @@ import {
 
 export function App() {
   const [currentTab, setCurrentTab] = useState('command');
-  const { snapshot, isConnected, latencyMs, refresh } = useSystemWebSocket();
+  const { snapshot, isConnected, refresh } = useSystemWebSocket();
 
   const tabs = [
     { id: 'command', label: 'Command Center', icon: LayoutDashboard },
@@ -122,10 +122,6 @@ export function App() {
             <span className="status-dot" />
             <span>{snapshot?.system_b_connected ? 'Twin connected' : 'Simulation mode'}</span>
           </div>
-          <div className="header-metric">
-            <span>Latency</span>
-            <strong>{latencyMs} ms</strong>
-          </div>
           <button className="header-icon-button" onClick={refresh} title="Refresh system state">
             <RefreshCw />
           </button>
@@ -188,9 +184,9 @@ export function App() {
             <button className={currentTab === 'missions' ? 'active' : ''} onClick={() => setCurrentTab('missions')}><Radio />Missions</button>
           </div>
 
-          {currentTab === 'command' && <ResQNetCommandCenter snapshot={snapshot} isConnected={isConnected} latencyMs={latencyMs} refresh={refresh} />}
+          {currentTab === 'command' && <ResQNetCommandCenter snapshot={snapshot} isConnected={isConnected} refresh={refresh} />}
           {currentTab === 'operations' && (
-            <OperationsDashboard snapshot={snapshot} isConnected={isConnected} latencyMs={latencyMs} onRefresh={refresh} />
+            <OperationsDashboard snapshot={snapshot} isConnected={isConnected} onRefresh={refresh} />
           )}
           {currentTab === 'incidents' && <IncidentManagement onRefresh={refresh} snapshot={snapshot} />}
           {currentTab === 'victims' && <VictimIntelligence onRefresh={refresh} snapshot={snapshot} />}
@@ -198,9 +194,9 @@ export function App() {
           {currentTab === 'missions' && <MissionControlView onRefresh={refresh} snapshot={snapshot} />}
           {currentTab === 'routes' && <RoutePlanningView snapshot={snapshot} onRefresh={refresh} />}
           {currentTab === 'hazards' && <HazardMonitorView snapshot={snapshot} />}
-          {currentTab === 'telemetry' && <TelemetryView snapshot={snapshot} latencyMs={latencyMs} />}
+          {currentTab === 'telemetry' && <TelemetryView snapshot={snapshot} />}
           {currentTab === 'decisions' && <DecisionExplanationView onRefresh={refresh} />}
-          {currentTab === 'system' && <SystemDiagnosticsView snapshot={snapshot} latencyMs={latencyMs} />}
+          {currentTab === 'system' && <SystemDiagnosticsView snapshot={snapshot} />}
         </main>
       </div>
 

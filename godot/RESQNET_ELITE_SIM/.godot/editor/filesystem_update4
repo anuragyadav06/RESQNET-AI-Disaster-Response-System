@@ -1,0 +1,3 @@
+res://scripts/resqnet_client.gd
+res://scenes/Main.tscn
+res://scripts/drone_fleet.gd

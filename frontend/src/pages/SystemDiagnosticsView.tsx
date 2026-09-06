@@ -5,10 +5,9 @@ import { Activity, Radio, Cpu, HardDrive, ShieldCheck, RefreshCw } from 'lucide-
 
 interface SystemDiagnosticsViewProps {
   snapshot: WorldStateSnapshot | null;
-  latencyMs: number;
 }
 
-export const SystemDiagnosticsView: React.FC<SystemDiagnosticsViewProps> = ({ snapshot, latencyMs }) => {
+export const SystemDiagnosticsView: React.FC<SystemDiagnosticsViewProps> = ({ snapshot }) => {
   const [health, setHealth] = useState<HealthStatus | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
 
@@ -39,7 +38,7 @@ export const SystemDiagnosticsView: React.FC<SystemDiagnosticsViewProps> = ({ sn
             <Activity className="w-5 h-5 text-emerald-400" /> Live System Diagnostics & Diagnostics Mesh
           </h2>
           <p className="text-xs text-slate-400">
-            Real hardware-in-the-loop health verification: WebSocket link latency, state synchronization engine, and telemetry ingest rate.
+            Real hardware-in-the-loop health verification: WebSocket connectivity, state synchronization engine, and telemetry ingest rate.
           </p>
         </div>
         <button
@@ -73,10 +72,6 @@ export const SystemDiagnosticsView: React.FC<SystemDiagnosticsViewProps> = ({ sn
               <span className="text-cyan-300 font-bold">v{health?.state_version || 1}</span>
             </div>
             <div className="flex justify-between">
-              <span className="text-slate-400">WebSocket Ping Latency:</span>
-              <span className="text-emerald-400 font-bold">{latencyMs} ms</span>
-            </div>
-            <div className="flex justify-between">
               <span className="text-slate-400">Stale Entities:</span>
               <span className="text-slate-200">{health?.stale_entities || 0}</span>
             </div>
@@ -108,10 +103,6 @@ export const SystemDiagnosticsView: React.FC<SystemDiagnosticsViewProps> = ({ sn
             <div className="flex justify-between">
               <span className="text-slate-400">Telemetry Ingest Rate:</span>
               <span className="text-cyan-300 font-bold">{snapshot?.telemetry_rate_hz || 10.0} Hz</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-slate-400">Command Roundtrip:</span>
-              <span className="text-emerald-400 font-bold">{snapshot?.command_latency_ms || 12.0} ms</span>
             </div>
             <div className="flex justify-between">
               <span className="text-slate-400">Simulation Clock:</span>
