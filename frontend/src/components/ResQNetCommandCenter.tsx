@@ -33,9 +33,16 @@ const priorityColor = (priority: string) => {
 const mapX = (x: number) => ((x + 360) / 720) * 100;
 const mapY = (z: number) => ((z + 360) / 720) * 100;
 
-export function ResQNetCommandCenter({ snapshot, isConnected, refresh }: { snapshot: WorldStateSnapshot | null; isConnected: boolean; refresh: () => void }) {
+export function ResQNetCommandCenter({
+  snapshot,
+  isConnected,
+  refresh,
+}: {
+  snapshot: WorldStateSnapshot | null;
+  isConnected: boolean;
+  refresh: () => void;
+}) {
   const [events, setEvents] = useState<any[]>([]);
-  const [searchPlan, setSearchPlan] = useState<any>(null);
   const [busy, setBusy] = useState('');
   const [command, setCommand] = useState('');
   const [transcript, setTranscript] = useState('');
@@ -44,7 +51,11 @@ export function ResQNetCommandCenter({ snapshot, isConnected, refresh }: { snaps
   const recognitionRef = useRef<any>(null);
 
   const loadEvents = useCallback(async () => {
-    try { setEvents(await api.getLiveEvents(40)); } catch { /* live state remains primary */ }
+    try {
+      setEvents(await api.getLiveEvents(40));
+    } catch {
+      /* live state remains primary */
+    }
   }, []);
 
   useEffect(() => {
@@ -53,12 +64,11 @@ export function ResQNetCommandCenter({ snapshot, isConnected, refresh }: { snaps
     return () => clearInterval(id);
   }, [loadEvents]);
 
-  const drones = useMemo(() => Object.values(snapshot?.drones || {}) as DroneEntity[], [snapshot]);
+  const drones = useMemo(
+    () => Object.values(snapshot?.drones || {}) as DroneEntity[],
+    [snapshot]
+  );
 
-  // Keep the operational radar focused only on victims that still need a response.
-  // Once any response mission (medical, rescue, or heavy lift) is assigned, the
-  // victim is removed from active operational views. The backend record is NOT
-  // deleted, so mission/audit history remains intact.
   const victims = useMemo(() => {
     const terminalStatuses = new Set([
       'EVACUATED',
@@ -71,32 +81,43 @@ export function ResQNetCommandCenter({ snapshot, isConnected, refresh }: { snaps
       'SAFE',
     ]);
 
-    return (Object.values(snapshot?.victims || {}) as Victim[]).filter(v =>
-      !v.assigned_mission_id && !terminalStatuses.has(v.status)
+    return (Object.values(snapshot?.victims || {}) as Victim[]).filter(
+      (v) => !v.assigned_mission_id && !terminalStatuses.has(v.status)
     );
   }, [snapshot]);
 
-  const critical = victims.filter(v => v.priority_class === 'CRITICAL').length;
-  const activeMissions = drones.filter(d => d.current_mission_id);
-  const idleDrones = drones.filter(d => d.status === 'IDLE').length;
-  const blockedRoads = snapshot ? Object.values(snapshot.road_edges).filter(e => e.is_blocked).length : 0;
-  const activeHazards = snapshot ? Object.values(snapshot.hazards).filter((h: any) => h.active).length : 0;
+  const activeMissions = drones.filter((d) => d.current_mission_id);
+  const idleDrones = drones.filter((d) => d.status === 'IDLE').length;
+  const blockedRoads = snapshot
+    ? Object.values(snapshot.road_edges).filter((e) => e.is_blocked).length
+    : 0;
+  const activeHazards = snapshot
+    ? Object.values(snapshot.hazards).filter((h: any) => h.active).length
+    : 0;
   const incidentCount = snapshot ? Object.keys(snapshot.incidents).length : 0;
 
-  const topVictims = [...victims].sort((a, b) => b.priority_score - a.priority_score).slice(0, 7);
+  const topVictims = [...victims]
+    .sort((a, b) => b.priority_score - a.priority_score)
+    .slice(0, 7);
 
   const latestEvents = events.slice(-8).reverse();
 
   const speak = (text: string) => {
     setResponse(text);
+
     if ('speechSynthesis' in window) {
       window.speechSynthesis.cancel();
       window.speechSynthesis.speak(new SpeechSynthesisUtterance(text));
     }
   };
 
-  const execute = async (label: string, fn: () => Promise<any>, spoken?: (r: any) => string) => {
+  const execute = async (
+    label: string,
+    fn: () => Promise<any>,
+    spoken?: (r: any) => string
+  ) => {
     setBusy(label);
+
     try {
       const result = await fn();
       await refresh();
@@ -117,19 +138,19 @@ export function ResQNetCommandCenter({ snapshot, isConnected, refresh }: { snaps
 
     if (!SpeechRecognitionCtor) {
       setVoiceState('error');
-      speak('Voice recognition is not supported by this browser. Try Google Chrome, or use the text command box.');
+      speak(
+        'Voice recognition is not supported by this browser. Try Google Chrome, or use the text command box.'
+      );
       return;
     }
 
-    // Verify microphone access separately. This prevents microphone permission
-    // errors from being confused with speech-recognition service errors.
     try {
       if (!navigator.mediaDevices?.getUserMedia) {
         throw new Error('Microphone access is not available in this browser.');
       }
 
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      stream.getTracks().forEach(track => track.stop());
+      stream.getTracks().forEach((track) => track.stop());
     } catch (error: any) {
       setVoiceState('error');
       const name = error?.name || '';
@@ -144,19 +165,16 @@ export function ResQNetCommandCenter({ snapshot, isConnected, refresh }: { snaps
       return;
     }
 
-    // Stop any previous session cleanly.
     if (recognitionRef.current) {
-      try { recognitionRef.current.abort(); } catch { /* already stopped */ }
+      try {
+        recognitionRef.current.abort();
+      } catch {}
       recognitionRef.current = null;
     }
 
     const rec = new SpeechRecognitionCtor();
     recognitionRef.current = rec;
 
-    // Keep recognition deliberately simple and broadly compatible.
-    // Do NOT use SpeechRecognitionPhrase/phrases or processLocally here:
-    // unsupported implementations can raise errors such as
-    // "phrases-not-supported" before speech is even captured.
     rec.lang = 'en-US';
     rec.continuous = false;
     rec.interimResults = true;
@@ -175,21 +193,18 @@ export function ResQNetCommandCenter({ snapshot, isConnected, refresh }: { snaps
       for (let i = e.resultIndex || 0; i < e.results.length; i += 1) {
         const result = e.results[i];
         const text = result?.[0]?.transcript || '';
+
         if (result.isFinal) finalText += `${text} `;
         else interimText += `${text} `;
       }
 
       const combined = (finalText || interimText).trim();
-      if (combined) {
-        setTranscript(combined);
-      }
+
+      if (combined) setTranscript(combined);
 
       if (finalText.trim()) {
         const spokenCommand = finalText.trim();
         setCommand(spokenCommand);
-
-        // A successful voice recognition result is a command, not merely text.
-        // Execute it directly so the operator does not need a second click.
         void runCommand(spokenCommand);
       }
     };
@@ -204,11 +219,10 @@ export function ResQNetCommandCenter({ snapshot, isConnected, refresh }: { snaps
         'not-allowed': 'Microphone permission is blocked. Allow microphone access for this site.',
         'service-not-allowed': 'This browser has disabled its speech recognition service. Try Google Chrome.',
         'language-not-supported': 'English speech recognition is not available in this browser. Try Google Chrome.',
-        'network': 'The browser speech service is unavailable. Try Google Chrome with internet access, or use the text command box.',
-        'aborted': 'Voice capture stopped.',
+        network: 'The browser speech service is unavailable. Try Google Chrome with internet access, or use the text command box.',
+        aborted: 'Voice capture stopped.',
       };
 
-      // Do not speak the error for an intentional stop.
       if (code !== 'aborted') {
         speak(messages[code] || `Voice input failed (${code}). Check microphone and browser speech settings.`);
       }
@@ -216,7 +230,7 @@ export function ResQNetCommandCenter({ snapshot, isConnected, refresh }: { snaps
 
     rec.onend = () => {
       recognitionRef.current = null;
-      setVoiceState(current => current === 'error' ? 'error' : 'idle');
+      setVoiceState((current) => (current === 'error' ? 'error' : 'idle'));
     };
 
     try {
@@ -229,11 +243,12 @@ export function ResQNetCommandCenter({ snapshot, isConnected, refresh }: { snaps
   };
 
   const stopVoice = () => {
-    try { recognitionRef.current?.abort(); } catch { /* already stopped */ }
+    try {
+      recognitionRef.current?.abort();
+    } catch {}
     recognitionRef.current = null;
     setVoiceState('idle');
   };
-
 
   const INTENT_LABELS: Record<string, string> = {
     GET_STATUS: 'get the current status',
@@ -245,25 +260,37 @@ export function ResQNetCommandCenter({ snapshot, isConnected, refresh }: { snaps
   const runCommand = async (commandOverride?: string) => {
     const text = (commandOverride ?? command).trim();
     if (!text) return;
+
     try {
       const executed = await api.executeOperatorCommand(text);
       const parsed = executed.parsed || {};
       const result = executed.result || {};
+
       if (executed.status === 'NOT_EXECUTED') {
         const suggestions: string[] = parsed.suggestions || [];
+
         if (suggestions.length) {
-          const asPhrases = suggestions.map(s => `"${INTENT_LABELS[s] || s}"`).join(' or ');
+          const asPhrases = suggestions
+            .map((s) => `"${INTENT_LABELS[s] || s}"`)
+            .join(' or ');
+
           speak(`I didn't quite catch that. Did you mean ${asPhrases}?`);
         } else {
           speak(parsed.message || 'Command not executed. Try a specific victim or drone action.');
         }
+
         return;
       }
+
       if (parsed.intent === 'GET_STATUS') {
-        speak(`System operational. ${result.available_drones ?? 0} drones available, ${result.critical_victims ?? 0} critical victims, and ${result.active_missions ?? 0} active missions.`);
+        speak(
+          `System operational. ${result.available_drones ?? 0} drones available, ${result.active_missions ?? 0} active missions.`
+        );
       } else if (parsed.intent === 'DISPATCH_RESPONSE') {
         const mission = result.mission;
-        speak(`Response mission ${mission?.mission_id || 'created'} dispatched to ${parsed.parameters?.victim_id || 'the victim'}.`);
+        speak(
+          `Response mission ${mission?.mission_id || 'created'} dispatched to ${parsed.parameters?.victim_id || 'the victim'}.`
+        );
       } else if (parsed.intent === 'START_RECON') {
         speak(`Reconnaissance activated for ${result.drone_count ?? 16} scout drones.`);
       } else if (parsed.intent === 'AUTO_DISPATCH') {
@@ -290,6 +317,7 @@ export function ResQNetCommandCenter({ snapshot, isConnected, refresh }: { snaps
           <h1>Command Center</h1>
           <p>Live incident picture, response resources and autonomous mission control.</p>
         </div>
+
         <div className="rqcc-heading-state">
           <div className={`rqcc-live-state ${isConnected && snapshot?.system_b_connected ? 'online' : 'degraded'}`}>
             <span className="state-dot" />
@@ -300,14 +328,16 @@ export function ResQNetCommandCenter({ snapshot, isConnected, refresh }: { snaps
       </section>
 
       <section className="overview-grid">
-        <article className={`incident-summary ${critical > 0 || activeHazards > 0 ? 'has-alert' : ''}`}>
+        <article className={`incident-summary ${activeHazards > 0 ? 'has-alert' : ''}`}>
           <div className="incident-summary-top">
             <div>
               <span className="section-kicker">CURRENT OPERATION</span>
               <h2>{incidentCount > 0 ? 'Active emergency response' : 'Monitoring city state'}</h2>
             </div>
+
             <span className={`severity-badge ${incidentCount > 0 ? 'critical' : 'normal'}`}>
-              <span />{incidentCount > 0 ? 'Active incident' : 'No active incident'}
+              <span />
+              {incidentCount > 0 ? 'Active incident' : 'No active incident'}
             </span>
           </div>
 
@@ -321,7 +351,11 @@ export function ResQNetCommandCenter({ snapshot, isConnected, refresh }: { snaps
           <div className="incident-alert-line">
             <AlertTriangle />
             <div>
-              <strong>{critical > 0 ? `${critical} critical victim${critical === 1 ? '' : 's'} require attention` : 'No critical victims currently flagged'}</strong>
+              <strong>
+                {victims.length > 0
+                  ? `${victims.length} active victim${victims.length === 1 ? '' : 's'} currently tracked`
+                  : 'No active victims currently tracked'}
+              </strong>
               <span>{activeHazards} active hazard zones · {blockedRoads} blocked road segments</span>
             </div>
           </div>
@@ -330,7 +364,6 @@ export function ResQNetCommandCenter({ snapshot, isConnected, refresh }: { snaps
         <div className="metric-stack">
           <Metric label="Drone fleet" value={`${idleDrones}/${drones.length || 31}`} detail="available" icon={<Navigation />} />
           <Metric label="Active missions" value={activeMissions.length} detail="live assignments" icon={<Crosshair />} />
-          <Metric label="Critical victims" value={critical} detail={`${victims.length} tracked`} icon={<AlertTriangle />} tone="critical" />
         </div>
       </section>
 
@@ -349,10 +382,11 @@ export function ResQNetCommandCenter({ snapshot, isConnected, refresh }: { snaps
               <Mic className="command-input-icon" />
               <input
                 value={command}
-                onChange={e => setCommand(e.target.value)}
-                onKeyDown={e => e.key === 'Enter' && runCommand()}
+                onChange={(e) => setCommand(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && runCommand()}
                 placeholder="Try: “Find trapped civilians” or “Activate 16-drone grid search”"
               />
+
               <button
                 className={`voice-toggle ${voiceState === 'listening' ? 'recording' : ''}`}
                 onClick={voiceState === 'listening' ? stopVoice : startVoice}
@@ -361,6 +395,7 @@ export function ResQNetCommandCenter({ snapshot, isConnected, refresh }: { snaps
                 {recognitionRef.current ? <MicOff /> : <Mic />}
               </button>
             </div>
+
             <button className="primary-command-button" onClick={() => void runCommand()}>
               <Send /> Execute
             </button>
@@ -380,32 +415,72 @@ export function ResQNetCommandCenter({ snapshot, isConnected, refresh }: { snaps
             </div>
             <Volume2 />
           </div>
+
           <p>{response}</p>
         </div>
       </section>
 
       <section className="quick-actions">
-        <QuickAction label="Activate 16-drone grid search" icon={<Search />} busy={busy === 'Grid search activation'} onClick={() => execute('Grid search activation', api.startRecon, r => `Recon plan created. ${r.drone_count} scout drones assigned.`)} />
-        <QuickAction label="Triage & dispatch" icon={<Siren />} busy={busy === 'Priority response'} onClick={() => execute('Priority response', api.triageDispatch, r => `${r.dispatched?.length || 0} priority missions dispatched.`)} />
-        <QuickAction label="Reprioritize victims" icon={<Brain />} busy={busy === 'Victim reprioritization'} onClick={() => execute('Victim reprioritization', api.reprioritizeVictims, () => 'Victim priority matrix updated.')} />
-        <QuickAction label="Replan missions" icon={<RefreshCw />} busy={busy === 'Dynamic replanning'} onClick={() => execute('Dynamic replanning', api.evaluateReplanning, r => `Replanning evaluation completed. ${Array.isArray(r) ? r.length : 0} changes evaluated.`)} />
+        <QuickAction
+          label="Activate 16-drone grid search"
+          icon={<Search />}
+          busy={busy === 'Grid search activation'}
+          onClick={() =>
+            execute(
+              'Grid search activation',
+              api.startRecon,
+              (r) => `Recon plan created. ${r.drone_count} scout drones assigned.`
+            )
+          }
+        />
+
+        <QuickAction
+          label="Triage & dispatch"
+          icon={<Siren />}
+          busy={busy === 'Priority response'}
+          onClick={() =>
+            execute(
+              'Priority response',
+              api.triageDispatch,
+              (r) => `${r.dispatched?.length || 0} priority missions dispatched.`
+            )
+          }
+        />
+
+        <QuickAction
+          label="Reprioritize victims"
+          icon={<Brain />}
+          busy={busy === 'Victim reprioritization'}
+          onClick={() =>
+            execute(
+              'Victim reprioritization',
+              api.reprioritizeVictims,
+              () => 'Victim priority matrix updated.'
+            )
+          }
+        />
+
+        <QuickAction
+          label="Replan missions"
+          icon={<RefreshCw />}
+          busy={busy === 'Dynamic replanning'}
+          onClick={() =>
+            execute(
+              'Dynamic replanning',
+              api.evaluateReplanning,
+              (r) =>
+                `Replanning evaluation completed. ${Array.isArray(r) ? r.length : 0} changes evaluated.`
+            )
+          }
+        />
       </section>
 
-      {/* ==========================================================
-          LIVE OPERATIONS
-          Full-width city picture followed by the priority queue
-          and live activity feed. Drone fleet remains available
-          in the map and top metrics, but has no separate panel.
-          ========================================================== */}
+      {/* LIVE OPERATIONS — full-width city picture, priority queue and activity. */}
       <section
         className="command-grid command-grid-optimized"
         style={{ gridTemplateColumns: '1fr' }}
       >
-        <div
-          className="command-column command-column-left"
-          style={{ width: '100%' }}
-        >
-          {/* LIVE CITY PICTURE — FULL WIDTH */}
+        <div className="command-column command-column-left" style={{ width: '100%' }}>
           <article className="rqcc-panel map-panel">
             <PanelHeading
               title="Live city picture"
@@ -455,7 +530,7 @@ export function ResQNetCommandCenter({ snapshot, isConnected, refresh }: { snaps
                 ) : null
               )}
 
-              {victims.map(v => (
+              {victims.map((v) => (
                 <div
                   key={v.id}
                   className={`map-victim ${priorityColor(v.priority_class)}`}
@@ -467,7 +542,7 @@ export function ResQNetCommandCenter({ snapshot, isConnected, refresh }: { snaps
                 />
               ))}
 
-              {drones.map(d => (
+              {drones.map((d) => (
                 <div
                   key={d.id}
                   className="map-drone"
@@ -492,7 +567,6 @@ export function ResQNetCommandCenter({ snapshot, isConnected, refresh }: { snaps
             </div>
           </article>
 
-          {/* PRIORITY QUEUE */}
           <article className="rqcc-panel priority-panel">
             <PanelHeading
               title="Priority queue"
@@ -501,11 +575,9 @@ export function ResQNetCommandCenter({ snapshot, isConnected, refresh }: { snaps
             />
 
             <div className="priority-list">
-              {topVictims.length === 0 && (
-                <EmptyState text="No victims detected." />
-              )}
+              {topVictims.length === 0 && <EmptyState text="No victims detected." />}
 
-              {topVictims.map(v => (
+              {topVictims.map((v) => (
                 <div className="priority-row" key={v.id}>
                   <span className={`priority-pill ${priorityColor(v.priority_class)}`}>
                     {v.priority_class}
@@ -520,17 +592,13 @@ export function ResQNetCommandCenter({ snapshot, isConnected, refresh }: { snaps
                     </span>
                   </div>
 
-                  <span className="priority-score">
-                    {v.priority_score.toFixed(0)}
-                  </span>
-
+                  <span className="priority-score">{v.priority_score.toFixed(0)}</span>
                   <ArrowUpRight className="row-arrow" />
                 </div>
               ))}
             </div>
           </article>
 
-          {/* LIVE ACTIVITY */}
           <article className="rqcc-panel activity-panel">
             <PanelHeading
               title="Live activity"
@@ -539,15 +607,10 @@ export function ResQNetCommandCenter({ snapshot, isConnected, refresh }: { snaps
             />
 
             <div className="activity-list">
-              {latestEvents.length === 0 && (
-                <EmptyState text="Waiting for live events." />
-              )}
+              {latestEvents.length === 0 && <EmptyState text="Waiting for live events." />}
 
               {latestEvents.map((event: any, index) => (
-                <div
-                  className="activity-row"
-                  key={event.event_id || index}
-                >
+                <div className="activity-row" key={event.event_id || index}>
                   <span className="activity-time">
                     {new Date(
                       (event.timestamp || Date.now() / 1000) * 1000
@@ -560,9 +623,7 @@ export function ResQNetCommandCenter({ snapshot, isConnected, refresh }: { snaps
                   <span className="activity-marker" />
 
                   <div>
-                    <strong>
-                      {event.event_type || 'System event'}
-                    </strong>
+                    <strong>{event.event_type || 'System event'}</strong>
                     <span>
                       {event.payload?.message ||
                         event.payload?.drone_id ||
@@ -577,16 +638,23 @@ export function ResQNetCommandCenter({ snapshot, isConnected, refresh }: { snaps
           </article>
         </div>
       </section>
-
     </div>
   );
 }
 
 function Metric({
-  label, value, detail, icon, tone,
-}: { label: string; value: string | number; detail: string; icon: React.ReactNode; tone?: string }) {
+  label,
+  value,
+  detail,
+  icon,
+}: {
+  label: string;
+  value: string | number;
+  detail: string;
+  icon: React.ReactNode;
+}) {
   return (
-    <div className={`summary-metric ${tone || ''}`}>
+    <div className="summary-metric">
       <div className="summary-metric-icon">{icon}</div>
       <div>
         <span>{label}</span>
@@ -597,7 +665,15 @@ function Metric({
   );
 }
 
-function PanelHeading({ title, subtitle, right }: { title: string; subtitle: string; right?: string }) {
+function PanelHeading({
+  title,
+  subtitle,
+  right,
+}: {
+  title: string;
+  subtitle: string;
+  right?: string;
+}) {
   return (
     <div className="rqcc-panel-heading">
       <div>
@@ -609,7 +685,17 @@ function PanelHeading({ title, subtitle, right }: { title: string; subtitle: str
   );
 }
 
-function QuickAction({ label, icon, busy, onClick }: { label: string; icon: React.ReactNode; busy: boolean; onClick: () => void }) {
+function QuickAction({
+  label,
+  icon,
+  busy,
+  onClick,
+}: {
+  label: string;
+  icon: React.ReactNode;
+  busy: boolean;
+  onClick: () => void;
+}) {
   return (
     <button className="quick-action" onClick={onClick} disabled={busy}>
       {busy ? <RefreshCw className="spin" /> : icon}
@@ -619,7 +705,12 @@ function QuickAction({ label, icon, busy, onClick }: { label: string; icon: Reac
 }
 
 function EmptyState({ text }: { text: string }) {
-  return <div className="empty-state"><Users /><span>{text}</span></div>;
+  return (
+    <div className="empty-state">
+      <Users />
+      <span>{text}</span>
+    </div>
+  );
 }
 
 export default ResQNetCommandCenter;

@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { WorldStateSnapshot, Victim } from '../types';
 import { api } from '../services/api';
-import { HeartPulse, RefreshCw, Send, Camera, MapPin, Radio, ShieldAlert, Truck, Crosshair, Wrench, CheckCircle2 } from 'lucide-react';
+import { HeartPulse, RefreshCw, Send, Camera, MapPin, Radio, ShieldAlert, Truck, Wrench, CheckCircle2 } from 'lucide-react';
 
 interface VictimIntelligenceProps { onRefresh: () => void; snapshot: WorldStateSnapshot | null; }
 
@@ -58,7 +58,6 @@ export const VictimIntelligence: React.FC<VictimIntelligenceProps> = ({ onRefres
               <Info icon={<ShieldAlert/>} label="HAZARD" value={v.hazard_type.replaceAll('_',' ')}/>
               <Info icon={<Radio/>} label="SCOUT" value={v.captured_by_drone_id || 'UNKNOWN'}/>
               <Info icon={<MapPin/>} label="LOCATION" value={`X ${v.location.x.toFixed(1)} · Z ${v.location.z.toFixed(1)}`}/>
-              <Info icon={<HeartPulse/>} label="MEDICAL / STATUS" value={`${(v.medical_severity*100).toFixed(0)}% · ${v.status}`}/>
             </div>
             <div className="mt-3 text-[10px] font-mono text-slate-500">Evidence: {v.evidence?.captured_at ? new Date(v.evidence.captured_at*1000).toLocaleString() : 'pending'} · Confidence {(v.confidence*100).toFixed(0)}%</div>
           </div>

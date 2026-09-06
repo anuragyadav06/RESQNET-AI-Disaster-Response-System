@@ -1,14 +1,15 @@
 import React, { useState } from 'react';
-import { WorldStateSnapshot, DroneEntity, Victim, RoadEdge } from '../types';
+
+import { WorldStateSnapshot, RoadEdge } from '../types';
 import { TacticalMap } from '../components/TacticalMap';
 import { api } from '../services/api';
+
 import {
   Activity,
   AlertTriangle,
   Flame,
   Radio,
   Shield,
-  Play,
   RotateCcw,
   RefreshCw,
   HeartPulse,
@@ -47,7 +48,6 @@ export const OperationsDashboard: React.FC<OperationsDashboardProps> = ({
     setTimeout(() => setActionMessage(null), 4000);
   };
 
-  // Scenario Triggers
   const handleTriggerEarthquake = async () => {
     setActionLoading('earthquake');
     try {
@@ -145,54 +145,71 @@ export const OperationsDashboard: React.FC<OperationsDashboardProps> = ({
     }
   };
 
-  // KPIs — total detected victims remains the denominator; critical count
-  // is calculated from unresolved victims using the explainable assessment.
   const allVictims = snapshot ? Object.values(snapshot.victims) : [];
+
   const terminalVictimStatuses = new Set([
-    'RESCUED', 'ASSISTED', 'EVACUATED', 'TREATED',
-    'STABILIZED', 'MEDICALLY_STABILIZED', 'RESOLVED', 'SAFE',
+    'RESCUED',
+    'ASSISTED',
+    'EVACUATED',
+    'TREATED',
+    'STABILIZED',
+    'MEDICALLY_STABILIZED',
+    'RESOLVED',
+    'SAFE',
   ]);
+
   const activeVictims = allVictims.filter(
-    (v) => !v.assigned_mission_id && !terminalVictimStatuses.has(String(v.status).toUpperCase())
+    (v) =>
+      !v.assigned_mission_id &&
+      !terminalVictimStatuses.has(String(v.status).toUpperCase())
   );
-  const criticalVictims = activeVictims.filter((v) => v.priority_class === 'CRITICAL');
-  const criticalCount = criticalVictims.length;
-  const totalVictimCount = allVictims.length;
+
   const activeIncidentsCount = snapshot ? Object.keys(snapshot.incidents).length : 0;
+
   const idleDronesCount = snapshot
     ? Object.values(snapshot.drones).filter((d) => d.status === 'IDLE').length
     : 0;
-  const availableMedical = snapshot ? Object.values(snapshot.drones).filter(d => d.status === 'IDLE' && d.capabilities.includes('MEDICAL')).length : 0;
-  const availableRescue = snapshot ? Object.values(snapshot.drones).filter(d => d.status === 'IDLE' && d.capabilities.includes('RESCUE')).length : 0;
-  const availableHeavy = snapshot ? Object.values(snapshot.drones).filter(d => d.status === 'IDLE' && d.capabilities.includes('HEAVY_LIFT')).length : 0;
+
+  const availableMedical = snapshot
+    ? Object.values(snapshot.drones).filter(
+        (d) => d.status === 'IDLE' && d.capabilities.includes('MEDICAL')
+      ).length
+    : 0;
+
+  const availableRescue = snapshot
+    ? Object.values(snapshot.drones).filter(
+        (d) => d.status === 'IDLE' && d.capabilities.includes('RESCUE')
+      ).length
+    : 0;
+
+  const availableHeavy = snapshot
+    ? Object.values(snapshot.drones).filter(
+        (d) => d.status === 'IDLE' && d.capabilities.includes('HEAVY_LIFT')
+      ).length
+    : 0;
 
   return (
     <div className="space-y-4">
-      {/* 1. Live Operation Status Banner */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-        {/* Critical Victims */}
-        <div className="bg-[#0b121e] border border-cyan-900/40 p-3 rounded-lg flex items-center gap-3">
-          <div className={`p-2 rounded-lg ${criticalCount > 0 ? 'bg-red-950 text-red-400' : 'bg-slate-800 text-slate-400'}`}>
-            <AlertTriangle className="w-5 h-5" />
-          </div>
-          <div>
-            <div className="text-[10px] text-slate-400 uppercase font-mono tracking-wider">Critical Victims</div>
-            <div className="text-sm font-bold font-mono text-red-400">{criticalCount} <span className="text-xs text-slate-400 font-normal">/ {totalVictimCount}</span></div>
-            <div className="text-[10px] text-slate-500 font-mono">State + hazard + medical + accessibility</div>
-          </div>
-        </div>
-
+      {/* 1. Live Operation Status Banner — Critical Victims KPI intentionally removed. */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         {/* Drone Readiness */}
         <div className="bg-[#0b121e] border border-cyan-900/40 p-3 rounded-lg flex items-center gap-3">
           <div className="p-2 rounded-lg bg-cyan-950 text-cyan-400">
             <Shield className="w-5 h-5" />
           </div>
           <div>
-            <div className="text-[10px] text-slate-400 uppercase font-mono tracking-wider">Fleet Ready</div>
-            <div className="text-sm font-bold font-mono text-cyan-300">
-              {idleDronesCount} <span className="text-xs text-slate-400 font-normal">/ {snapshot ? Object.keys(snapshot.drones).length : 4}</span>
+            <div className="text-[10px] text-slate-400 uppercase font-mono tracking-wider">
+              Fleet Ready
             </div>
-            <div className="text-[10px] text-slate-500 font-mono">Base Alpha hangar</div>
+            <div className="text-sm font-bold font-mono text-cyan-300">
+              {idleDronesCount}{' '}
+              <span className="text-xs text-slate-400 font-normal">
+                / {snapshot ? Object.keys(snapshot.drones).length : 4}
+              </span>
+            </div>
+            <div className="text-[10px] text-slate-500 font-mono">
+              Base Alpha hangar
+            </div>
           </div>
         </div>
 
@@ -202,9 +219,15 @@ export const OperationsDashboard: React.FC<OperationsDashboardProps> = ({
             <Flame className="w-5 h-5" />
           </div>
           <div>
-            <div className="text-[10px] text-slate-400 uppercase font-mono tracking-wider">Active Incidents</div>
-            <div className="text-sm font-bold font-mono text-orange-300">{activeIncidentsCount} Declared</div>
-            <div className="text-[10px] text-slate-500 font-mono">{snapshot ? Object.keys(snapshot.hazards).length : 0} hazard zones</div>
+            <div className="text-[10px] text-slate-400 uppercase font-mono tracking-wider">
+              Active Incidents
+            </div>
+            <div className="text-sm font-bold font-mono text-orange-300">
+              {activeIncidentsCount} Declared
+            </div>
+            <div className="text-[10px] text-slate-500 font-mono">
+              {snapshot ? Object.keys(snapshot.hazards).length : 0} hazard zones
+            </div>
           </div>
         </div>
       </div>
@@ -215,6 +238,7 @@ export const OperationsDashboard: React.FC<OperationsDashboardProps> = ({
           <span className="text-xs font-mono font-bold text-slate-300 mr-2 flex items-center gap-1.5">
             <Sliders className="w-4 h-4 text-cyan-400" /> Scenario Commands:
           </span>
+
           <button
             onClick={handleTriggerEarthquake}
             disabled={actionLoading !== ''}
@@ -222,6 +246,7 @@ export const OperationsDashboard: React.FC<OperationsDashboardProps> = ({
           >
             <Activity className="w-3.5 h-3.5" /> Trigger Metro Earthquake (M 7.2)
           </button>
+
           <button
             onClick={handleTriggerAftershock}
             disabled={actionLoading !== ''}
@@ -229,6 +254,7 @@ export const OperationsDashboard: React.FC<OperationsDashboardProps> = ({
           >
             <AlertTriangle className="w-3.5 h-3.5" /> Inject Roadblock & Replan
           </button>
+
           <button
             onClick={handleResetCity}
             disabled={actionLoading !== ''}
@@ -246,6 +272,7 @@ export const OperationsDashboard: React.FC<OperationsDashboardProps> = ({
           >
             <Send className="w-3.5 h-3.5" /> Auto-Dispatch Top Victim
           </button>
+
           <button
             onClick={handleForceReplan}
             disabled={actionLoading !== ''}
@@ -265,14 +292,17 @@ export const OperationsDashboard: React.FC<OperationsDashboardProps> = ({
               : 'bg-emerald-950/90 text-emerald-300 border-emerald-700'
           }`}
         >
-          {actionMessage.isError ? <XCircle className="w-4 h-4" /> : <CheckCircle2 className="w-4 h-4" />}
+          {actionMessage.isError ? (
+            <XCircle className="w-4 h-4" />
+          ) : (
+            <CheckCircle2 className="w-4 h-4" />
+          )}
           {actionMessage.text}
         </div>
       )}
 
-      {/* 3. Main Center Grid: Tactical Map (Left) + Tactical Entity Inspector (Right) */}
+      {/* 3. Main Center Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
-        {/* Tactical Map (3 Cols) */}
         <div className="lg:col-span-3">
           <TacticalMap
             snapshot={snapshot}
@@ -281,7 +311,6 @@ export const OperationsDashboard: React.FC<OperationsDashboardProps> = ({
           />
         </div>
 
-        {/* Entity Inspector Drawer (1 Col) */}
         <div className="bg-[#0b121e] border border-cyan-900/40 rounded-xl p-4 flex flex-col justify-between shadow-xl">
           <div>
             <div className="border-b border-cyan-900/40 pb-2 mb-3 flex items-center justify-between">
@@ -299,82 +328,120 @@ export const OperationsDashboard: React.FC<OperationsDashboardProps> = ({
               </div>
             ) : (
               <div className="space-y-3 text-xs">
-                {/* Drone Inspector */}
                 {entityType === 'DRONE' && (
                   <div className="space-y-2">
                     <div className="text-sm font-bold font-mono text-slate-100">{selectedEntity.id}</div>
                     <div className="text-[11px] text-slate-400">{selectedEntity.callsign}</div>
+
                     <div className="grid grid-cols-2 gap-2 pt-2">
                       <div className="bg-slate-900 p-2 rounded">
                         <div className="text-[10px] text-slate-500">BATTERY</div>
-                        <div className="font-mono text-emerald-400 font-bold">{selectedEntity.battery_percent.toFixed(1)}%</div>
+                        <div className="font-mono text-emerald-400 font-bold">
+                          {selectedEntity.battery_percent.toFixed(1)}%
+                        </div>
                       </div>
+
                       <div className="bg-slate-900 p-2 rounded">
                         <div className="text-[10px] text-slate-500">STATUS</div>
-                        <div className="font-mono text-cyan-300 font-bold">{selectedEntity.status}</div>
+                        <div className="font-mono text-cyan-300 font-bold">
+                          {selectedEntity.status}
+                        </div>
                       </div>
+
                       <div className="bg-slate-900 p-2 rounded">
                         <div className="text-[10px] text-slate-500">ALTITUDE</div>
-                        <div className="font-mono text-slate-300">{selectedEntity.position.y.toFixed(1)} m</div>
+                        <div className="font-mono text-slate-300">
+                          {selectedEntity.position.y.toFixed(1)} m
+                        </div>
                       </div>
+
                       <div className="bg-slate-900 p-2 rounded">
                         <div className="text-[10px] text-slate-500">PAYLOAD</div>
-                        <div className="font-mono text-slate-300">{selectedEntity.current_payload_kg} / {selectedEntity.max_payload_kg} kg</div>
+                        <div className="font-mono text-slate-300">
+                          {selectedEntity.current_payload_kg} / {selectedEntity.max_payload_kg} kg
+                        </div>
                       </div>
                     </div>
+
                     <div className="text-[11px] text-slate-400 font-mono pt-1">
                       Capabilities: {selectedEntity.capabilities?.join(', ')}
                     </div>
                   </div>
                 )}
 
-                {/* Victim Inspector */}
                 {entityType === 'VICTIM' && (
                   <div className="space-y-2">
                     <div className="flex items-center justify-between">
-                      <span className="text-sm font-bold font-mono text-slate-100">{selectedEntity.id}</span>
-                      <span className={`px-2 py-0.5 rounded font-mono font-bold text-[10px] ${
-                        selectedEntity.priority_class === 'CRITICAL' ? 'bg-red-950 text-red-300 border border-red-700' : 'bg-amber-950 text-amber-300'
-                      }`}>
+                      <span className="text-sm font-bold font-mono text-slate-100">
+                        {selectedEntity.id}
+                      </span>
+
+                      <span
+                        className={`px-2 py-0.5 rounded font-mono font-bold text-[10px] ${
+                          selectedEntity.priority_class === 'CRITICAL'
+                            ? 'bg-red-950 text-red-300 border border-red-700'
+                            : 'bg-amber-950 text-amber-300'
+                        }`}
+                      >
                         {selectedEntity.priority_class}
                       </span>
                     </div>
+
                     <div className="text-[11px] text-slate-300">{selectedEntity.name}</div>
+
                     <div className="bg-slate-900 p-2 rounded space-y-1">
                       <div className="flex justify-between text-[11px]">
                         <span className="text-slate-400">Medical Severity:</span>
-                        <span className="font-mono text-red-400">{(selectedEntity.medical_severity * 100).toFixed(0)}%</span>
+                        <span className="font-mono text-red-400">
+                          {(selectedEntity.medical_severity * 100).toFixed(0)}%
+                        </span>
                       </div>
+
                       <div className="flex justify-between text-[11px]">
                         <span className="text-slate-400">Survival Urgency:</span>
-                        <span className="font-mono text-amber-400">{(selectedEntity.estimated_survival_urgency * 100).toFixed(0)}%</span>
+                        <span className="font-mono text-amber-400">
+                          {(selectedEntity.estimated_survival_urgency * 100).toFixed(0)}%
+                        </span>
                       </div>
+
                       <div className="flex justify-between text-[11px]">
                         <span className="text-slate-400">People Count:</span>
-                        <span className="font-mono text-slate-200">{selectedEntity.people_count} trapped</span>
+                        <span className="font-mono text-slate-200">
+                          {selectedEntity.people_count} trapped
+                        </span>
                       </div>
+
                       <div className="flex justify-between text-[11px]">
                         <span className="text-slate-400">Priority Score:</span>
-                        <span className="font-mono text-cyan-300 font-bold">{selectedEntity.priority_score.toFixed(3)}</span>
+                        <span className="font-mono text-cyan-300 font-bold">
+                          {selectedEntity.priority_score.toFixed(3)}
+                        </span>
                       </div>
+
                       <div className="flex justify-between text-[11px]">
                         <span className="text-slate-400">Confidence:</span>
-                        <span className="font-mono text-emerald-400">{(selectedEntity.confidence * 100).toFixed(0)}%</span>
+                        <span className="font-mono text-emerald-400">
+                          {(selectedEntity.confidence * 100).toFixed(0)}%
+                        </span>
                       </div>
+
                       <div className="pt-1 border-t border-slate-800 mt-1 text-[10px]">
                         <span className="text-cyan-400 font-bold">Assessment basis:</span>
-                        <span className="text-slate-400"> observed state, hazard exposure, medical severity, survival urgency and accessibility.</span>
+                        <span className="text-slate-400">
+                          {' '}observed state, hazard exposure, medical severity, survival urgency and accessibility.
+                        </span>
                       </div>
                     </div>
 
-                    {/* Compact explainability: keep the most operationally useful reasons visible. */}
                     {selectedEntity.breakdown?.reasons && (
                       <div className="text-[10px] text-slate-400">
                         <div className="font-bold text-slate-300 mb-1">Explainable Reasons</div>
+
                         <div className="flex flex-wrap gap-x-2 gap-y-0.5">
                           {selectedEntity.breakdown.reasons
                             .filter((r: string) => {
                               const text = String(r).toLowerCase();
+
                               return (
                                 !text.includes('bounded') &&
                                 !text.includes('assessment confidence') &&
@@ -395,25 +462,77 @@ export const OperationsDashboard: React.FC<OperationsDashboardProps> = ({
 
                     {selectedEntity.status !== 'EVACUATED' && (
                       <div className="grid grid-cols-1 gap-2 mt-2">
-                        <button onClick={() => handleDispatchToVictim(selectedEntity.id, 'MEDICAL_SUPPLY_DROP')} disabled={!!actionLoading || availableMedical === 0} className="w-full py-1.5 bg-emerald-700 hover:bg-emerald-600 disabled:opacity-40 text-white font-mono font-bold rounded shadow transition flex items-center justify-center gap-1.5"><HeartPulse className="w-3.5 h-3.5"/> Dispatch Medical {availableMedical === 0 ? '(NONE READY)' : `(${availableMedical})`}</button>
-                        <button onClick={() => handleDispatchToVictim(selectedEntity.id, 'RESCUE_EXTRACTION')} disabled={!!actionLoading || availableRescue === 0} className="w-full py-1.5 bg-red-600 hover:bg-red-500 disabled:opacity-40 text-white font-mono font-bold rounded shadow transition flex items-center justify-center gap-1.5"><Send className="w-3.5 h-3.5"/> Dispatch Rescue {availableRescue === 0 ? '(NONE READY)' : `(${availableRescue})`}</button>
-                        <button onClick={() => handleDispatchToVictim(selectedEntity.id, 'HEAVY_EXTRICATION')} disabled={!!actionLoading || availableHeavy === 0} className="w-full py-1.5 bg-amber-700 hover:bg-amber-600 disabled:opacity-40 text-white font-mono font-bold rounded shadow transition flex items-center justify-center gap-1.5"><Wrench className="w-3.5 h-3.5"/> Dispatch Heavy Lift {availableHeavy === 0 ? '(NONE READY)' : `(${availableHeavy})`}</button>
+                        <button
+                          onClick={() =>
+                            handleDispatchToVictim(
+                              selectedEntity.id,
+                              'MEDICAL_SUPPLY_DROP'
+                            )
+                          }
+                          disabled={!!actionLoading || availableMedical === 0}
+                          className="w-full py-1.5 bg-emerald-700 hover:bg-emerald-600 disabled:opacity-40 text-white font-mono font-bold rounded shadow transition flex items-center justify-center gap-1.5"
+                        >
+                          <HeartPulse className="w-3.5 h-3.5" />
+                          Dispatch Medical {availableMedical === 0 ? '(NONE READY)' : `(${availableMedical})`}
+                        </button>
+
+                        <button
+                          onClick={() =>
+                            handleDispatchToVictim(
+                              selectedEntity.id,
+                              'RESCUE_EXTRACTION'
+                            )
+                          }
+                          disabled={!!actionLoading || availableRescue === 0}
+                          className="w-full py-1.5 bg-red-600 hover:bg-red-500 disabled:opacity-40 text-white font-mono font-bold rounded shadow transition flex items-center justify-center gap-1.5"
+                        >
+                          <Send className="w-3.5 h-3.5" />
+                          Dispatch Rescue {availableRescue === 0 ? '(NONE READY)' : `(${availableRescue})`}
+                        </button>
+
+                        <button
+                          onClick={() =>
+                            handleDispatchToVictim(
+                              selectedEntity.id,
+                              'HEAVY_EXTRICATION'
+                            )
+                          }
+                          disabled={!!actionLoading || availableHeavy === 0}
+                          className="w-full py-1.5 bg-amber-700 hover:bg-amber-600 disabled:opacity-40 text-white font-mono font-bold rounded shadow transition flex items-center justify-center gap-1.5"
+                        >
+                          <Wrench className="w-3.5 h-3.5" />
+                          Dispatch Heavy Lift {availableHeavy === 0 ? '(NONE READY)' : `(${availableHeavy})`}
+                        </button>
                       </div>
                     )}
                   </div>
                 )}
 
-                {/* Road Segment Inspector */}
                 {entityType === 'ROAD' && (
                   <div className="space-y-2">
                     <div className="text-sm font-bold font-mono text-slate-100">{selectedEntity.id}</div>
-                    <div className="text-slate-400 text-[11px]">Length: {selectedEntity.distance_m}m</div>
-                    <div className={`p-2 rounded font-mono ${selectedEntity.is_blocked ? 'bg-red-950 text-red-300 border border-red-700' : 'bg-slate-900 text-emerald-400'}`}>
-                      {selectedEntity.is_blocked ? '⛔ ROAD BLOCKED' : '✅ ROAD CLEAR'}
+                    <div className="text-slate-400 text-[11px]">
+                      Length: {selectedEntity.distance_m}m
                     </div>
+
+                    <div
+                      className={`p-2 rounded font-mono ${
+                        selectedEntity.is_blocked
+                          ? 'bg-red-950 text-red-300 border border-red-700'
+                          : 'bg-slate-900 text-emerald-400'
+                      }`}
+                    >
+                      {selectedEntity.is_blocked
+                        ? '⛔ ROAD BLOCKED'
+                        : '✅ ROAD CLEAR'}
+                    </div>
+
                     {selectedEntity.blockage_reason && (
-                      <div className="text-[11px] text-red-400 font-mono">Reason: {selectedEntity.blockage_reason}</div>
+                      <div className="text-[11px] text-red-400 font-mono">
+                        Reason: {selectedEntity.blockage_reason}
+                      </div>
                     )}
+
                     <button
                       onClick={() => handleToggleRoad(selectedEntity)}
                       className={`w-full py-1.5 rounded font-mono font-bold transition ${
@@ -427,33 +546,52 @@ export const OperationsDashboard: React.FC<OperationsDashboardProps> = ({
                   </div>
                 )}
 
-                {/* Hazard Inspector */}
                 {entityType === 'HAZARD' && (
                   <div className="space-y-2">
-                    <div className="text-sm font-bold font-mono text-orange-400">{selectedEntity.type}</div>
+                    <div className="text-sm font-bold font-mono text-orange-400">
+                      {selectedEntity.type}
+                    </div>
+
                     <div className="bg-slate-900 p-2 rounded space-y-1">
                       <div className="flex justify-between">
                         <span className="text-slate-400">Radius:</span>
-                        <span className="font-mono text-slate-200">{selectedEntity.radius_m}m</span>
+                        <span className="font-mono text-slate-200">
+                          {selectedEntity.radius_m}m
+                        </span>
                       </div>
+
                       <div className="flex justify-between">
                         <span className="text-slate-400">Intensity:</span>
-                        <span className="font-mono text-orange-300">{(selectedEntity.intensity * 100).toFixed(0)}%</span>
+                        <span className="font-mono text-orange-300">
+                          {(selectedEntity.intensity * 100).toFixed(0)}%
+                        </span>
                       </div>
                     </div>
                   </div>
                 )}
 
-                {/* Building Inspector */}
                 {entityType === 'BUILDING' && (
                   <div className="space-y-2">
-                    <div className="text-sm font-bold font-mono text-slate-100">{selectedEntity.name}</div>
-                    <div className="text-slate-400 text-[11px]">District: {selectedEntity.district}</div>
+                    <div className="text-sm font-bold font-mono text-slate-100">
+                      {selectedEntity.name}
+                    </div>
+
+                    <div className="text-slate-400 text-[11px]">
+                      District: {selectedEntity.district}
+                    </div>
+
                     <div className="bg-slate-900 p-2 rounded">
                       <div className="text-[10px] text-slate-500">DAMAGE LEVEL</div>
-                      <div className={`font-mono font-bold ${
-                        selectedEntity.damage_level === 'COLLAPSED' ? 'text-red-400' : selectedEntity.damage_level === 'STRUCTURAL_CRACK' ? 'text-amber-400' : 'text-emerald-400'
-                      }`}>
+
+                      <div
+                        className={`font-mono font-bold ${
+                          selectedEntity.damage_level === 'COLLAPSED'
+                            ? 'text-red-400'
+                            : selectedEntity.damage_level === 'STRUCTURAL_CRACK'
+                              ? 'text-amber-400'
+                              : 'text-emerald-400'
+                        }`}
+                      >
                         {selectedEntity.damage_level}
                       </div>
                     </div>

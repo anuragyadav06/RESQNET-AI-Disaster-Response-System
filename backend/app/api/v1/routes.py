@@ -9,9 +9,9 @@ from pydantic import BaseModel
 from app.core.config import settings
 from app.schemas.common import Vector3D
 from app.schemas.drone import DroneStatus
-from app.schemas.mission import MissionObjective
+from app.schemas.mission import MissionObjective, MissionStatus
 from app.schemas.world import WorldStateSnapshot, HazardZone, HazardType
-from app.schemas.victim import Victim
+from app.schemas.victim import Victim, VictimStatus
 from app.schemas.incident import IncidentEntity, IncidentType
 from app.schemas.audit import AuditRecord, AuditEventType
 from app.state.world_state import world_state
@@ -116,8 +116,6 @@ async def list_victims():
     return list(world_state.victims.values())
 
 
-
-
 class VictimDetectionRequest(BaseModel):
     """Camera/thermal detection submitted by System B or an operator test client."""
     source_drone_id: str
@@ -156,6 +154,7 @@ async def detect_victim(req: VictimDetectionRequest):
     incident = await incident_agent.process_observation(obs)
     nearest = min(world_state.victims.values(), key=lambda v: v.location.ground_distance_to(req.location))
     return {"status": "DETECTED", "victim": nearest, "incident": incident}
+
 
 @api_router.post("/victims/reprioritize")
 async def reprioritize_victims():
@@ -233,10 +232,11 @@ async def abort_drone_mission(drone_id: str):
     drone = world_state.drones[resolved_id]
     if not drone.current_mission_id:
         raise HTTPException(status_code=409, detail=f"Drone {resolved_id} has no active mission")
-    success = await mission_agent.abort_mission(drone.current_mission_id, reason="Operator voice command: abort")
+    mission_id = drone.current_mission_id
+    success = await mission_agent.abort_mission(mission_id, reason="Operator voice command: abort")
     if not success:
-        raise HTTPException(status_code=404, detail=f"Mission {drone.current_mission_id} not found")
-    return {"status": "SUCCESS", "drone_id": resolved_id, "mission_id": drone.current_mission_id}
+        raise HTTPException(status_code=404, detail=f"Mission {mission_id} not found")
+    return {"status": "SUCCESS", "drone_id": resolved_id, "mission_id": mission_id}
 
 
 @api_router.post("/drones/{drone_id}/rtb")
@@ -271,7 +271,6 @@ async def block_road(req: RoadBlockRequest):
     success = world_state.block_road_edge(req.edge_id, req.reason)
     if not success:
         raise HTTPException(status_code=404, detail=f"Road edge {req.edge_id} not found")
-    # Trigger replan
     replan = await replanning_agent.evaluate_and_replan()
     return {"status": "SUCCESS", "edge_id": req.edge_id, "replan_results": replan}
 
@@ -302,7 +301,7 @@ async def list_commands():
 async def list_decisions(limit: int = 50):
     events = audit_logger.get_recent(limit=limit)
     decision_events = [
-        e for e in events 
+        e for e in events
         if e.event_type in [
             AuditEventType.DRONE_SELECTED,
             AuditEventType.VICTIM_PRIORITIZED,
@@ -331,13 +330,16 @@ async def evaluate_replanning():
 class VoiceCommandRequest(BaseModel):
     text: str
 
+
 @api_router.get("/search/plan")
 async def get_search_plan():
     return search_planner.build_plan()
 
+
 @api_router.post("/response/recon")
 async def start_recon():
     return await response_orchestrator.start_recon()
+
 
 @api_router.post("/response/triage-dispatch")
 async def triage_dispatch():
@@ -361,9 +363,11 @@ async def dispatch_response(req: ResponseDispatchRequest):
         raise HTTPException(status_code=400, detail=msg)
     return {"status": "SUCCESS", "mission": plan, "message": msg}
 
+
 @api_router.get("/response/status")
 async def response_status():
     return await response_orchestrator.status()
+
 
 @api_router.post("/voice/interpret")
 async def interpret_voice(req: VoiceCommandRequest):
@@ -411,8 +415,6 @@ async def execute_voice(req: VoiceCommandRequest):
             await mission_agent.abort_mission(drone.current_mission_id, reason="Operator voice command: RTB")
         result = {"status": "SUCCESS", "drone_id": drone_id, "message": f"{drone_id} recalled to base"}
     elif intent == "DEPLOY_TO_SECTOR":
-        # Sector deployment is accepted only when the requested drone exists.
-        # The Digital Twin remains the authority for the resulting movement.
         drone_id = _resolve_drone_id(str(params.get("drone_id", "")))
         drone = world_state.drones[drone_id]
         if drone.status.value != "IDLE":
@@ -423,6 +425,147 @@ async def execute_voice(req: VoiceCommandRequest):
 
     await event_bus.publish("VOICE_COMMAND_EXECUTED", {"text": req.text, **parsed, "result": result}, source="OPERATOR")
     return {"status": "EXECUTED", "parsed": parsed, "result": result}
+
+
+# ============================================================
+# SYSTEM-B RESPONSE LIFECYCLE
+# ============================================================
+
+def _terminal_status_for_response(action: str, objective: str = "") -> VictimStatus:
+    """Map a completed System-B response to a frontend terminal victim status."""
+    action_upper = str(action or "").upper()
+    objective_upper = str(objective or "").upper()
+
+    if "MEDICAL" in action_upper or "SUPPL" in action_upper or "MEDICAL" in objective_upper:
+        return VictimStatus.TREATED
+
+    if (
+        "EXTRICATION" in action_upper
+        or "HEAVY" in action_upper
+        or "EXTRICATION" in objective_upper
+    ):
+        return VictimStatus.RESCUED
+
+    if (
+        "RESCUE" in action_upper
+        or "EXTRACTION" in action_upper
+        or "RESCUE" in objective_upper
+    ):
+        return VictimStatus.RESCUED
+
+    if "TRIAGE" in action_upper:
+        return VictimStatus.ASSISTED
+
+    # Survey/recon is an intervention acknowledgement rather than
+    # a physical extraction, but it is terminal for the current
+    # response lifecycle displayed by TacticalMap.
+    return VictimStatus.ASSISTED
+
+
+async def _handle_system_b_response_completed(event: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Process Godot's generic RESPONSE_COMPLETED event.
+
+    Victim assignment fields are deliberately retained here. That lets
+    TacticalMap keep the handled victim visible while the handling drone
+    is still at the victim, then remove it when the drone physically
+    leaves the victim area.
+    """
+    success = bool(event.get("success", True))
+    victim_id = event.get("victim_id")
+    mission_id = event.get("mission_id")
+    drone_id = event.get("drone_id")
+    action = str(event.get("action", ""))
+    result = event.get("result", {})
+
+    if not success:
+        return {
+            "status": "FAILED",
+            "victim_id": victim_id,
+            "mission_id": mission_id,
+            "drone_id": drone_id,
+        }
+
+    victim = world_state.victims.get(str(victim_id)) if victim_id else None
+    mission = world_state.missions.get(str(mission_id)) if mission_id else None
+
+    if mission is not None:
+        mission.status = MissionStatus.COMPLETED
+        if hasattr(mission, "failure_reason"):
+            mission.failure_reason = None
+        if hasattr(mission, "result"):
+            mission.result = result
+
+    if victim is not None:
+        objective = mission.objective.value if mission is not None else ""
+        victim.status = _terminal_status_for_response(action, objective)
+
+        if hasattr(victim, "notes"):
+            note = f" System-B response completed successfully ({action or 'response'})."
+            victim.notes = (victim.notes or "") + note
+
+    world_state.increment_version()
+
+    await audit_logger.log_event(
+        event_type=AuditEventType.MISSION_CREATED,
+        decision=(
+            f"System-B response completed"
+            f"{f' for mission {mission_id}' if mission_id else ''}"
+        ),
+        reason=(
+            f"Response completed for victim {victim_id or 'unknown'} "
+            f"using drone {drone_id or 'unknown'}."
+        ),
+        inputs={
+            "victim_id": victim_id,
+            "mission_id": mission_id,
+            "drone_id": drone_id,
+            "action": action,
+        },
+        output={
+            "mission_status": mission.status.value if mission is not None else None,
+            "victim_status": victim.status.value if victim is not None else None,
+        },
+        confidence=1.0,
+        affected_entities=[
+            x for x in [mission_id, drone_id, victim_id] if x
+        ],
+    )
+
+    return {
+        "status": "COMPLETED",
+        "victim_id": victim_id,
+        "mission_id": mission_id,
+        "drone_id": drone_id,
+        "victim_status": victim.status.value if victim is not None else None,
+    }
+
+
+@api_router.post("/simulation/system-b-event")
+async def receive_system_b_event(event: Dict[str, Any]):
+    """
+    REST endpoint for System-B lifecycle events and direct testing.
+    """
+    event_type = str(
+        event.get("event_type")
+        or event.get("type")
+        or event.get("event")
+        or ""
+    ).upper()
+
+    if event_type == "RESPONSE_COMPLETED":
+        return await _handle_system_b_response_completed(event)
+
+    if event_type == "RESPONSE_FAILED":
+        return {
+            "status": "FAILED",
+            "victim_id": event.get("victim_id"),
+            "mission_id": event.get("mission_id"),
+            "drone_id": event.get("drone_id"),
+        }
+
+    return {"status": "IGNORED", "event_type": event_type}
+
 
 @api_router.get("/events/live")
 async def live_events(limit: int = Query(default=50, ge=1, le=200)):
